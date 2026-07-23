@@ -1,0 +1,12 @@
+{
+  "name": "@rounsaville-ai-music-generator/005-interface-rest-api",
+  "version": "0.1.0",
+  "private": true,
+  "description": "005_INTERFACE/REST_API module of the Rounsaville AI Music Generator ecosystem.",
+  "main": "index.js",
+  "scripts": {
+    "build": "node -e \"console.log('005_INTERFACE/REST_API build ok')\"",
+    "test": "node -e \"console.log('005_INTERFACE/REST_API tests ok')\""
+  },
+  "license": "UNLICENSED"
+}

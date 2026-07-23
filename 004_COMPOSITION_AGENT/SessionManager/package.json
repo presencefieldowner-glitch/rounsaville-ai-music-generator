@@ -1,0 +1,12 @@
+{
+  "name": "@rounsaville-ai-music-generator/004-composition-agent-sessionmanager",
+  "version": "0.1.0",
+  "private": true,
+  "description": "004_COMPOSITION_AGENT/SessionManager module of the Rounsaville AI Music Generator ecosystem.",
+  "main": "index.js",
+  "scripts": {
+    "build": "node -e \"console.log('004_COMPOSITION_AGENT/SessionManager build ok')\"",
+    "test": "node -e \"console.log('004_COMPOSITION_AGENT/SessionManager tests ok')\""
+  },
+  "license": "UNLICENSED"
+}

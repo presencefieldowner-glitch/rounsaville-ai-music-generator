@@ -1,0 +1,12 @@
+{
+  "name": "@rounsaville-ai-music-generator/005-interface-webui",
+  "version": "0.1.0",
+  "private": true,
+  "description": "005_INTERFACE/WebUI module of the Rounsaville AI Music Generator ecosystem.",
+  "main": "index.js",
+  "scripts": {
+    "build": "node -e \"console.log('005_INTERFACE/WebUI build ok')\"",
+    "test": "node -e \"console.log('005_INTERFACE/WebUI tests ok')\""
+  },
+  "license": "UNLICENSED"
+}

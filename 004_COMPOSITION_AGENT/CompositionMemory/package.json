@@ -1,0 +1,12 @@
+{
+  "name": "@rounsaville-ai-music-generator/004-composition-agent-compositionmemory",
+  "version": "0.1.0",
+  "private": true,
+  "description": "004_COMPOSITION_AGENT/CompositionMemory module of the Rounsaville AI Music Generator ecosystem.",
+  "main": "index.js",
+  "scripts": {
+    "build": "node -e \"console.log('004_COMPOSITION_AGENT/CompositionMemory build ok')\"",
+    "test": "node -e \"console.log('004_COMPOSITION_AGENT/CompositionMemory tests ok')\""
+  },
+  "license": "UNLICENSED"
+}

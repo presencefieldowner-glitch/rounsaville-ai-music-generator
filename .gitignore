@@ -1,0 +1,7 @@
+node_modules/
+dist/
+_exports/
+*.tar.gz
+.DS_Store
+__pycache__/
+*.pyc

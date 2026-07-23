@@ -1,0 +1,12 @@
+{
+  "name": "@rounsaville-ai-music-generator/003-audio-engine-audiorenderer",
+  "version": "0.1.0",
+  "private": true,
+  "description": "003_AUDIO_ENGINE/AudioRenderer module of the Rounsaville AI Music Generator ecosystem.",
+  "main": "index.js",
+  "scripts": {
+    "build": "node -e \"console.log('003_AUDIO_ENGINE/AudioRenderer build ok')\"",
+    "test": "node -e \"console.log('003_AUDIO_ENGINE/AudioRenderer tests ok')\""
+  },
+  "license": "UNLICENSED"
+}
