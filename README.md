@@ -14,10 +14,37 @@ dependency-ordered layers below, and can export or archive the full tree.
 | Composition Agent | `004_COMPOSITION_AGENT/` | Session state, composition memory, track generation |
 | Interface | `005_INTERFACE/` | WebSocket, REST API, and web UI gateways |
 
-Each JS/TS module is a standalone npm package (`package.json` + `index.js`)
-that currently ships as a stub — replace the stub logic as real
-implementations land. `npm run build` / `npm test` in each stub just prints a
-confirmation so `build-all.sh` has something real to orchestrate end-to-end.
+Each JS module is a standalone npm package (`package.json` + `index.js` +
+`test/`) with a real, dependency-free implementation — no external npm
+packages, so `npm install` never touches the network:
+
+- **Foundation**: `Types` (Note/Track/Composition/Session factories +
+  validators), `Utilities` (id generation, seeded PRNG, dB/MIDI math,
+  retry/logging), `ProtocolSpecs` (the message envelope shared across
+  layers).
+- **LLM Gateway**: `PromptEngine` parses free text into a structured
+  generation spec (genre/mood/tempo/key/bars); `Guardrails` sanitizes
+  prompts and clamps the spec into safe ranges; `ModelRouter` dispatches to
+  registered generator backends with priority + fallback.
+- **Audio Engine**: `SynthEngine` is a real oscillator bank (sine/square/
+  saw/triangle) with envelopes; `AudioRenderer` renders a `Composition`
+  into PCM and encodes a playable 16-bit WAV; `MixMaster` mixes, normalizes,
+  and soft-limits buffers. `PythonRunner/audio_metrics.py` independently
+  verifies peak/RMS/clipping on real WAV bytes via the stdlib `wave` module.
+- **Composition Agent**: `SessionManager` (in-memory session CRUD + TTL
+  pruning), `CompositionMemory` (per-session event history), `TrackGenerator`
+  (deterministic, seeded algorithmic composer producing melody/bass/drums
+  over a major/minor scale).
+- **Interface**: `WebSockets` is a hand-rolled RFC 6455 server (handshake,
+  framing, masking) with no `ws` dependency; `REST_API` wires the whole
+  pipeline together (`POST /api/sessions`, `POST /api/sessions/:id/generate`,
+  `GET /api/sessions/:id`, `GET /api/health`) end-to-end from prompt text to
+  a returned WAV; `WebUI` is a single static page that calls the REST API
+  and plays the result.
+
+Every module's `npm test` runs real assertions via Node's built-in
+`node:test` runner (no jest/mocha needed); `PythonRunner` runs via
+`unittest`.
 
 ## Usage
 
