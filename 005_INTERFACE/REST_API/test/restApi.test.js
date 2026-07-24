@@ -318,3 +318,22 @@ test('POST /api/generate with format=wav reports the seed via the X-Generation-S
     assert.equal(res.headers.get('x-generation-seed'), '999');
   });
 });
+
+test('POST /api/generate: tempoStretch produces a real phase-vocoder-stretched WAV over HTTP', async () => {
+  await withServer(async ({ baseUrl }) => {
+    const request = (tempoStretch) =>
+      fetch(`${baseUrl}/api/generate`, {
+        method: 'POST',
+        body: JSON.stringify({
+          prompt: 'a lofi track in C major at 90 bpm, 4 bars',
+          seed: 8,
+          tempoStretch,
+          format: 'wav',
+        }),
+      }).then((r) => r.arrayBuffer());
+
+    const baseline = Buffer.from(await request(undefined));
+    const stretched = Buffer.from(await request(2));
+    assert.ok(stretched.length > baseline.length * 1.5, 'expected a meaningfully longer WAV from a 2x tempo stretch');
+  });
+});

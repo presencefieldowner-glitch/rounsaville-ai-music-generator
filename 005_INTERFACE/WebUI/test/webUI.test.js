@@ -43,6 +43,15 @@ test('getIndexHtml includes the deferred client-side (Web Audio) live-playback p
   assert.match(html, /AudioWorklet/i); // honest disclosure that pluck is approximated here
 });
 
+test('getIndexHtml includes pitch-bend/tempo-stretch controls wired to the phase vocoder params', () => {
+  const html = getIndexHtml();
+  assert.match(html, /id="pitchBend"/);
+  assert.match(html, /id="tempoStretch"/);
+  assert.match(html, /payload\.pitchSemitones = pitchSemitones/);
+  assert.match(html, /payload\.tempoStretch = tempoStretch/);
+  assert.match(html, /phase vocoder/i);
+});
+
 test('getIndexHtml produces well-formed, parseable script content (balanced braces/quotes)', () => {
   const html = getIndexHtml({ apiBaseUrl: '' });
   const scriptMatch = html.match(/<script>([\s\S]*)<\/script>/);

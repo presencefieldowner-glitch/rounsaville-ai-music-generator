@@ -3,7 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { defaultModelRouter, runGeneration, analyzeVoiceSamples, MAX_VOICE_SAMPLES } = require('../index.js');
-const { encodeWav } = require('../../../003_AUDIO_ENGINE/AudioRenderer');
+const { encodeWav, decodeWav } = require('../../../003_AUDIO_ENGINE/AudioRenderer');
 
 function sineWavBase64(frequency, seconds, sampleRate) {
   const n = Math.round(seconds * sampleRate);
@@ -51,4 +51,43 @@ test('analyzeVoiceSamples rejects too many samples', () => {
 
 test('analyzeVoiceSamples rejects an oversized sample', () => {
   assert.throws(() => analyzeVoiceSamples(['A'.repeat(9_000_000)]), /exceeds the maximum/i);
+});
+
+test('tempoStretch actually changes the rendered WAV duration via the phase vocoder', async () => {
+  const router = defaultModelRouter();
+  const prompt = 'a rock track in C major at 100 bpm, 4 bars';
+  const baseline = await runGeneration({ prompt, seed: 10 }, router);
+  const stretched = await runGeneration({ prompt, seed: 10, tempoStretch: 2 }, router);
+
+  const baseSamples = decodeWav(baseline.wav).samples.length;
+  const stretchedSamples = decodeWav(stretched.wav).samples.length;
+  const ratio = stretchedSamples / baseSamples;
+  assert.ok(Math.abs(ratio - 2) < 0.15, `expected ~2x duration, got ratio ${ratio}`);
+});
+
+test('pitchSemitones shifts pitch while the phase vocoder keeps the duration essentially unchanged', async () => {
+  const router = defaultModelRouter();
+  const prompt = 'a classical piece in C major at 100 bpm, 4 bars';
+  const baseline = await runGeneration({ prompt, seed: 20 }, router);
+  const shifted = await runGeneration({ prompt, seed: 20, pitchSemitones: 7 }, router);
+
+  const baseSamples = decodeWav(baseline.wav).samples.length;
+  const shiftedSamples = decodeWav(shifted.wav).samples.length;
+  assert.equal(baseSamples, shiftedSamples); // pitch-shift is duration-preserving by design
+});
+
+test('pitchSemitones/tempoStretch outside the allowed range are clamped, not rejected', async () => {
+  const result = await runGeneration(
+    { prompt: 'an edm track', seed: 5, pitchSemitones: 999, tempoStretch: 999 },
+    defaultModelRouter()
+  );
+  assert.equal(result.wav.toString('ascii', 0, 4), 'RIFF'); // still produced a valid WAV, didn't throw/hang
+});
+
+test('a request with no pitch/tempo params is byte-identical to one with the neutral values (0 semitones, 1x)', async () => {
+  const router = defaultModelRouter();
+  const prompt = 'a jazz track at 90 bpm';
+  const a = await runGeneration({ prompt, seed: 30 }, router);
+  const b = await runGeneration({ prompt, seed: 30, pitchSemitones: 0, tempoStretch: 1 }, router);
+  assert.ok(a.wav.equals(b.wav));
 });

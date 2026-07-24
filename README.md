@@ -42,7 +42,22 @@ packages, so `npm install` never touches the network:
   model, no timbre transfer, just a real pitch-range measurement used
   to keep a synthesized vocal line within that range.
   `PythonRunner/audio_metrics.py` independently verifies peak/RMS/
-  clipping on real WAV bytes via the stdlib `wave` module.
+  clipping on real WAV bytes via the stdlib `wave` module. `PhaseVocoder`
+  is a real phase vocoder — a from-scratch iterative radix-2 Cooley-Tukey
+  FFT (nothing else in the repo needed a full FFT before this), STFT
+  analysis with phase unwrapping to track each bin's true instantaneous
+  frequency, and overlap-add resynthesis. `timeStretch` changes duration
+  while preserving pitch; `pitchShift` (stretch, then resample back to
+  the original length) changes pitch while preserving duration. Verified
+  against an independent pitch estimator (`VoiceProfiler`'s
+  autocorrelation detector, not its own math): a stretched sine still
+  measures at its original frequency, and +/-12 semitones measures at
+  double/half frequency. Wired into `GenerationPipeline` as optional
+  `pitchSemitones` (+/-12) / `tempoStretch` (0.5x-2x) request params, and
+  into the WebUI as pitch-bend/tempo-stretch sliders — confirmed through
+  a real browser end-to-end (slider -> API -> phase vocoder -> WAV): an
+  8-bar default track at 120 bpm (~17s) came back at ~34s with a 2x
+  tempo-stretch request, exactly as expected.
 - **Composition Agent**: `SessionManager` (in-memory session CRUD + TTL
   pruning), `CompositionMemory` (per-session event history),
   `TrackGenerator` — a deterministic, seeded algorithmic composer, not a

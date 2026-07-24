@@ -8,6 +8,7 @@
 // still rendering mono with no reverb/seed support after REST_API grew
 // those features).
 
+const { clamp } = require('../../001_FOUNDATION/Utilities');
 const { sanitizePrompt, validateSpec } = require('../../002_LLM_GATEWAY/Guardrails');
 const { parsePrompt } = require('../../002_LLM_GATEWAY/PromptEngine');
 const { createModelRouter } = require('../../002_LLM_GATEWAY/ModelRouter');
@@ -15,11 +16,15 @@ const { generateComposition } = require('../TrackGenerator');
 const { renderComposition, interleaveStereo, encodeWav, decodeWav } = require('../../003_AUDIO_ENGINE/AudioRenderer');
 const { normalizeStereo, applyLimiterStereo, applyReverbStereo } = require('../../003_AUDIO_ENGINE/MixMaster');
 const { analyzeVoiceSample, buildVoiceProfile } = require('../../003_AUDIO_ENGINE/VoiceProfiler');
+const { pitchShift, timeStretch } = require('../../003_AUDIO_ENGINE/PhaseVocoder');
 
 const MAX_SEED = 2 ** 31 - 1;
 const MAX_VOICE_SAMPLES = 10;
 // ~6MB decoded, well over a few seconds of 16-bit mono WAV per phrase.
 const MAX_VOICE_SAMPLE_BASE64_LENGTH = 8_000_000;
+const MAX_PITCH_SEMITONES = 12; // +/- one octave
+const MIN_TEMPO_STRETCH = 0.5; // half speed
+const MAX_TEMPO_STRETCH = 2; // double speed
 
 function defaultModelRouter() {
   const router = createModelRouter();
@@ -53,7 +58,25 @@ async function runGeneration(body, modelRouter) {
   const { modelUsed, result: composition } = await modelRouter.route(spec);
   const { left, right, sampleRate } = renderComposition(composition);
   const reverberated = applyReverbStereo(left, right, sampleRate, composition.reverb);
-  const normalized = normalizeStereo(reverberated.left, reverberated.right);
+
+  // Optional post-processing via the phase vocoder: pitch-bend and/or
+  // tempo-stretch the already-rendered mix. Applied per-channel, then
+  // re-normalized/re-limited afterward since resampling can shift peak
+  // levels slightly.
+  let processedLeft = reverberated.left;
+  let processedRight = reverberated.right;
+  if (Number.isFinite(body.pitchSemitones) && body.pitchSemitones !== 0) {
+    const semitones = clamp(body.pitchSemitones, -MAX_PITCH_SEMITONES, MAX_PITCH_SEMITONES);
+    processedLeft = pitchShift(processedLeft, sampleRate, semitones);
+    processedRight = pitchShift(processedRight, sampleRate, semitones);
+  }
+  if (Number.isFinite(body.tempoStretch) && body.tempoStretch !== 1) {
+    const stretch = clamp(body.tempoStretch, MIN_TEMPO_STRETCH, MAX_TEMPO_STRETCH);
+    processedLeft = timeStretch(processedLeft, sampleRate, stretch);
+    processedRight = timeStretch(processedRight, sampleRate, stretch);
+  }
+
+  const normalized = normalizeStereo(processedLeft, processedRight);
   const mastered = applyLimiterStereo(normalized.left, normalized.right);
   const wav = encodeWav(interleaveStereo(mastered.left, mastered.right), sampleRate, 2);
 
@@ -91,4 +114,7 @@ module.exports = {
   MAX_SEED,
   MAX_VOICE_SAMPLES,
   MAX_VOICE_SAMPLE_BASE64_LENGTH,
+  MAX_PITCH_SEMITONES,
+  MIN_TEMPO_STRETCH,
+  MAX_TEMPO_STRETCH,
 };

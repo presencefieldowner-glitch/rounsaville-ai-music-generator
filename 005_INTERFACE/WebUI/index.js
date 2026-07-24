@@ -114,6 +114,22 @@ function getIndexHtml({ apiBaseUrl = '' } = {}) {
     </div>
   </div>
 
+  <div class="row">
+    <div>
+      <label for="pitchBend">Pitch bend (semitones): <span id="pitchBendValue">0</span></label>
+      <input type="range" id="pitchBend" min="-12" max="12" value="0" />
+    </div>
+    <div>
+      <label for="tempoStretch">Tempo stretch: <span id="tempoStretchValue">1.0x</span></label>
+      <input type="range" id="tempoStretch" min="50" max="200" value="100" />
+    </div>
+  </div>
+  <p class="disclaimer" style="margin-top:0.5rem;">
+    Both are applied to the already-rendered mix with a real phase vocoder (STFT phase
+    unwrapping + overlap-add resynthesis) &mdash; pitch bend changes pitch without changing
+    length; tempo stretch changes length without changing pitch.
+  </p>
+
   <div class="toggle">
     <input type="checkbox" id="instrumental" checked />
     <label for="instrumental" style="margin:0;">Instrumental (no vocal line)</label>
@@ -192,6 +208,10 @@ function getIndexHtml({ apiBaseUrl = '' } = {}) {
   var bpmValueEl = document.getElementById('bpmValue');
   var barsEl = document.getElementById('bars');
   var barsValueEl = document.getElementById('barsValue');
+  var pitchBendEl = document.getElementById('pitchBend');
+  var pitchBendValueEl = document.getElementById('pitchBendValue');
+  var tempoStretchEl = document.getElementById('tempoStretch');
+  var tempoStretchValueEl = document.getElementById('tempoStretchValue');
   var regenerateEl = document.getElementById('regenerate');
   var playerActionsEl = document.getElementById('playerActions');
   var downloadLinkEl = document.getElementById('downloadLink');
@@ -201,6 +221,10 @@ function getIndexHtml({ apiBaseUrl = '' } = {}) {
 
   bpmEl.addEventListener('input', function () { bpmValueEl.textContent = bpmEl.value; });
   barsEl.addEventListener('input', function () { barsValueEl.textContent = barsEl.value; });
+  pitchBendEl.addEventListener('input', function () { pitchBendValueEl.textContent = pitchBendEl.value; });
+  tempoStretchEl.addEventListener('input', function () {
+    tempoStretchValueEl.textContent = (tempoStretchEl.value / 100).toFixed(2) + 'x';
+  });
 
   function loadHistory() {
     try { return JSON.parse(localStorage.getItem(HISTORY_KEY)) || []; } catch (e) { return []; }
@@ -326,6 +350,10 @@ function getIndexHtml({ apiBaseUrl = '' } = {}) {
         var profile = loadVoiceProfile();
         if (profile) payload.voiceProfile = profile;
       }
+      var pitchSemitones = Number(pitchBendEl.value);
+      if (pitchSemitones !== 0) payload.pitchSemitones = pitchSemitones;
+      var tempoStretch = Number(tempoStretchEl.value) / 100;
+      if (tempoStretch !== 1) payload.tempoStretch = tempoStretch;
       var res = await fetch(apiBaseUrl + '/api/generate', {
         method: 'POST',
         body: JSON.stringify(payload),
