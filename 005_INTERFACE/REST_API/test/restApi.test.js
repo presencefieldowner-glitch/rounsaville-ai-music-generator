@@ -383,6 +383,45 @@ test('POST /api/lyrics is deterministic for the same seed and prompt', async () 
   });
 });
 
+test('POST /api/generate applies a real EQ over HTTP: boosted-bass WAV differs from the flat one', async () => {
+  await withServer(async ({ baseUrl }) => {
+    const request = (eq) =>
+      fetch(`${baseUrl}/api/generate`, {
+        method: 'POST',
+        body: JSON.stringify({ prompt: 'a rock track in C major at 100 bpm, 8 bars', seed: 7, eq, format: 'wav' }),
+      }).then((r) => r.arrayBuffer());
+
+    const flat = Buffer.from(await request(undefined));
+    const eqd = Buffer.from(await request({ bassDb: 10, trebleDb: -10 }));
+    assert.ok(!flat.equals(eqd), 'expected the EQ to actually change the rendered WAV bytes');
+  });
+});
+
+test('POST /api/generate with noDrums/noBass omits those tracks from the JSON composition', async () => {
+  await withServer(async ({ baseUrl }) => {
+    const res = await fetch(`${baseUrl}/api/generate`, {
+      method: 'POST',
+      body: JSON.stringify({ prompt: 'a rock track', noDrums: true, noBass: true }),
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.composition.tracks.find((t) => t.name === 'drums'), undefined);
+    assert.equal(body.composition.tracks.find((t) => t.name === 'bass'), undefined);
+  });
+});
+
+test('POST /api/generate detects a 3/4 waltz from the prompt text alone and reports it on the composition', async () => {
+  await withServer(async ({ baseUrl }) => {
+    const res = await fetch(`${baseUrl}/api/generate`, {
+      method: 'POST',
+      body: JSON.stringify({ prompt: 'a slow classical waltz at 100 bpm, 8 bars' }),
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.deepEqual(body.composition.timeSignature, [3, 4]);
+  });
+});
+
 test('POST /api/lyrics is rate-limited as a compute-heavy route', async () => {
   await withServer(
     async ({ baseUrl }) => {

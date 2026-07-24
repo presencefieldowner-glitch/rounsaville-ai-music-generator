@@ -130,10 +130,47 @@ function getIndexHtml({ apiBaseUrl = '' } = {}) {
     length; tempo stretch changes length without changing pitch.
   </p>
 
+  <div class="row">
+    <div>
+      <label for="bassDb">Bass: <span id="bassDbValue">0</span> dB</label>
+      <input type="range" id="bassDb" min="-12" max="12" value="0" />
+    </div>
+    <div>
+      <label for="midDb">Mid: <span id="midDbValue">0</span> dB</label>
+      <input type="range" id="midDb" min="-12" max="12" value="0" />
+    </div>
+    <div>
+      <label for="trebleDb">Treble: <span id="trebleDbValue">0</span> dB</label>
+      <input type="range" id="trebleDb" min="-12" max="12" value="0" />
+    </div>
+  </div>
+  <p class="disclaimer" style="margin-top:0.5rem;">
+    A real 3-band EQ &mdash; second-order biquad filters using the standard Audio EQ Cookbook
+    formulas (low-shelf/peaking/high-shelf), applied server-side before final loudness
+    normalization, not a cosmetic per-band multiply.
+  </p>
+
   <div class="toggle">
     <input type="checkbox" id="instrumental" checked />
     <label for="instrumental" style="margin:0;">Instrumental (no vocal line)</label>
   </div>
+  <div class="toggle">
+    <input type="checkbox" id="noDrums" />
+    <label for="noDrums" style="margin:0;">No drums</label>
+  </div>
+  <div class="toggle">
+    <input type="checkbox" id="noBass" />
+    <label for="noBass" style="margin:0;">No bass</label>
+  </div>
+  <div class="toggle">
+    <input type="checkbox" id="waltz" />
+    <label for="waltz" style="margin:0;">Waltz (3/4 time)</label>
+  </div>
+  <p class="disclaimer" style="margin-top:0.5rem;">
+    Waltz genuinely changes the rhythm grid the composer generates on (3 beats per bar with a
+    distinct "oom-pah-pah" drum pattern), not just a metadata label &mdash; see
+    004_COMPOSITION_AGENT/TrackGenerator.
+  </p>
   <div class="toggle">
     <input type="checkbox" id="useVoiceProfile" disabled />
     <label for="useVoiceProfile" style="margin:0;">Use my recorded voice profile for the vocal range</label>
@@ -175,6 +212,7 @@ function getIndexHtml({ apiBaseUrl = '' } = {}) {
   <button class="secondary" id="generateLyrics">Generate Lyrics</button>
   <span id="lyricsStatus" style="margin-left:0.75rem; font-size:0.85rem; color:#9a9aa5;"></span>
   <div id="lyricsOutput" hidden style="margin-top:0.75rem;">
+    <h3 id="lyricsTitle" style="margin:0 0 0.5rem;"></h3>
     <div id="lyricsSections"></div>
   </div>
 </section>
@@ -234,6 +272,15 @@ function getIndexHtml({ apiBaseUrl = '' } = {}) {
   var pitchBendValueEl = document.getElementById('pitchBendValue');
   var tempoStretchEl = document.getElementById('tempoStretch');
   var tempoStretchValueEl = document.getElementById('tempoStretchValue');
+  var bassDbEl = document.getElementById('bassDb');
+  var bassDbValueEl = document.getElementById('bassDbValue');
+  var midDbEl = document.getElementById('midDb');
+  var midDbValueEl = document.getElementById('midDbValue');
+  var trebleDbEl = document.getElementById('trebleDb');
+  var trebleDbValueEl = document.getElementById('trebleDbValue');
+  var noDrumsEl = document.getElementById('noDrums');
+  var noBassEl = document.getElementById('noBass');
+  var waltzEl = document.getElementById('waltz');
   var regenerateEl = document.getElementById('regenerate');
   var playerActionsEl = document.getElementById('playerActions');
   var downloadLinkEl = document.getElementById('downloadLink');
@@ -253,6 +300,9 @@ function getIndexHtml({ apiBaseUrl = '' } = {}) {
   tempoStretchEl.addEventListener('input', function () {
     tempoStretchValueEl.textContent = (tempoStretchEl.value / 100).toFixed(2) + 'x';
   });
+  bassDbEl.addEventListener('input', function () { bassDbValueEl.textContent = bassDbEl.value; });
+  midDbEl.addEventListener('input', function () { midDbValueEl.textContent = midDbEl.value; });
+  trebleDbEl.addEventListener('input', function () { trebleDbValueEl.textContent = trebleDbEl.value; });
 
   function loadHistory() {
     try { return JSON.parse(localStorage.getItem(HISTORY_KEY)) || []; } catch (e) { return []; }
@@ -368,7 +418,10 @@ function getIndexHtml({ apiBaseUrl = '' } = {}) {
     var instrumental = instrumentalEl.checked;
     return (prompt || ('a track in the ' + style + ' style')) +
       ', ' + style + ' style, ' + bpm + ' bpm, ' + bars + ' bars' +
-      (instrumental ? ', instrumental' : '');
+      (instrumental ? ', instrumental' : '') +
+      (noDrumsEl.checked ? ', no drums' : '') +
+      (noBassEl.checked ? ', no bass' : '') +
+      (waltzEl.checked ? ', waltz, 3/4 time' : '');
   }
 
   async function runGeneration(seedOverride) {
@@ -389,6 +442,15 @@ function getIndexHtml({ apiBaseUrl = '' } = {}) {
       if (pitchSemitones !== 0) payload.pitchSemitones = pitchSemitones;
       var tempoStretch = Number(tempoStretchEl.value) / 100;
       if (tempoStretch !== 1) payload.tempoStretch = tempoStretch;
+      var bassDb = Number(bassDbEl.value);
+      var midDb = Number(midDbEl.value);
+      var trebleDb = Number(trebleDbEl.value);
+      if (bassDb !== 0 || midDb !== 0 || trebleDb !== 0) {
+        payload.eq = { bassDb: bassDb, midDb: midDb, trebleDb: trebleDb };
+      }
+      if (noDrumsEl.checked) payload.noDrums = true;
+      if (noBassEl.checked) payload.noBass = true;
+      if (waltzEl.checked) payload.timeSignature = [3, 4];
       var res = await fetch(apiBaseUrl + '/api/generate', {
         method: 'POST',
         body: JSON.stringify(payload),
@@ -407,7 +469,15 @@ function getIndexHtml({ apiBaseUrl = '' } = {}) {
         bpm: body.composition.tempo,
         bars: body.composition.bars,
         seed: body.seed,
-        payload: { prompt: fullPrompt, instrumental: instrumental, voiceProfile: payload.voiceProfile },
+        payload: {
+          prompt: fullPrompt,
+          instrumental: instrumental,
+          voiceProfile: payload.voiceProfile,
+          eq: payload.eq,
+          noDrums: payload.noDrums,
+          noBass: payload.noBass,
+          timeSignature: payload.timeSignature,
+        },
         rating: null,
         createdAt: Date.now(),
       };
@@ -435,6 +505,7 @@ function getIndexHtml({ apiBaseUrl = '' } = {}) {
 
   // --- Lyrics (real template + rhyme-family generation, no audio) ---
   function renderLyrics(lyrics) {
+    document.getElementById('lyricsTitle').textContent = lyrics.title || '';
     var sectionsEl = document.getElementById('lyricsSections');
     sectionsEl.innerHTML = '';
     lyrics.sections.forEach(function (section) {

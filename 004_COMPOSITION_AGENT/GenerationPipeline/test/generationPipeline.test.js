@@ -120,3 +120,49 @@ test('a request with no pitch/tempo params is byte-identical to one with the neu
   const b = await runGeneration({ prompt, seed: 30, pitchSemitones: 0, tempoStretch: 1 }, router);
   assert.ok(a.wav.equals(b.wav));
 });
+
+test('runGeneration applies the requested EQ, producing an audibly different WAV than an EQ-less request', async () => {
+  const router = defaultModelRouter();
+  const prompt = 'a rock track in C major at 100 bpm, 8 bars';
+  const flat = await runGeneration({ prompt, seed: 40 }, router);
+  const eqd = await runGeneration({ prompt, seed: 40, eq: { bassDb: 10, trebleDb: -10 } }, router);
+  assert.ok(!flat.wav.equals(eqd.wav), 'expected EQ to actually change the rendered audio');
+});
+
+test('runGeneration with eq: {} (all zero/absent) is byte-identical to no eq at all', async () => {
+  const router = defaultModelRouter();
+  const prompt = 'an ambient track at 80 bpm';
+  const a = await runGeneration({ prompt, seed: 41 }, router);
+  const b = await runGeneration({ prompt, seed: 41, eq: {} }, router);
+  assert.ok(a.wav.equals(b.wav));
+});
+
+test('runGeneration clamps out-of-range EQ gains instead of rejecting the request', async () => {
+  const result = await runGeneration(
+    { prompt: 'a lofi track', seed: 42, eq: { bassDb: 999, midDb: -999, trebleDb: 999 } },
+    defaultModelRouter()
+  );
+  assert.equal(result.wav.toString('ascii', 0, 4), 'RIFF'); // still produced a valid WAV, didn't throw/hang
+});
+
+test('runGeneration respects an explicit noDrums/noBass flag detected only from the prompt text', async () => {
+  const result = await runGeneration({ prompt: 'a rock track with no drums and no bass' }, defaultModelRouter());
+  assert.equal(result.composition.tracks.find((t) => t.name === 'drums'), undefined);
+  assert.equal(result.composition.tracks.find((t) => t.name === 'bass'), undefined);
+});
+
+test('runGeneration lets an explicit noDrums/noBass body flag override the prompt text', async () => {
+  const result = await runGeneration({ prompt: 'a normal rock track', noDrums: true, noBass: true }, defaultModelRouter());
+  assert.equal(result.composition.tracks.find((t) => t.name === 'drums'), undefined);
+  assert.equal(result.composition.tracks.find((t) => t.name === 'bass'), undefined);
+});
+
+test('runGeneration renders a real 3/4 waltz when the prompt says so, reflected in the composition and a shorter render than the same bars in 4/4', async () => {
+  const router = defaultModelRouter();
+  const waltz = await runGeneration({ prompt: 'a classical waltz at 120 bpm, 8 bars', seed: 43 }, router);
+  const fourFour = await runGeneration({ prompt: 'a classical piece at 120 bpm, 8 bars', seed: 43 }, router);
+  assert.deepEqual(waltz.composition.timeSignature, [3, 4]);
+  assert.deepEqual(fourFour.composition.timeSignature, [4, 4]);
+  const { decodeWav } = require('../../../003_AUDIO_ENGINE/AudioRenderer');
+  assert.ok(decodeWav(waltz.wav).samples.length < decodeWav(fourFour.wav).samples.length);
+});

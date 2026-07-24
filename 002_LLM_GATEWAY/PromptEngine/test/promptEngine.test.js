@@ -2,7 +2,14 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { parsePrompt, buildSystemPrompt, detectInstrumental } = require('../index.js');
+const {
+  parsePrompt,
+  buildSystemPrompt,
+  detectInstrumental,
+  detectNoDrums,
+  detectNoBass,
+  detectTimeSignature,
+} = require('../index.js');
 
 test('parsePrompt extracts genre, mood, tempo, bars, key', () => {
   const spec = parsePrompt('An energetic edm track in A minor at 128 bpm, 16 bars');
@@ -70,4 +77,65 @@ test('parsePrompt carries the detected instrumental flag onto the spec', () => {
 test('buildSystemPrompt mentions instrumental when explicitly requested', () => {
   const spec = parsePrompt('an instrumental cinematic piece at 90 bpm');
   assert.match(buildSystemPrompt(spec), /instrumental/i);
+});
+
+// Regression test for a real bug: the previous key regex (`/\b([A-G]...)/i`)
+// matched a bare leading article "a"/"A" as the key under the
+// case-insensitive flag, so "a lofi track in C major" silently came back
+// as key A, not C. Anchoring the pattern to "in "/"key of " context fixes it.
+test('parsePrompt does not mistake the leading article "a" for the key A', () => {
+  assert.equal(parsePrompt('a happy pop song').key, 'C'); // no explicit key -> default
+  assert.equal(parsePrompt('a lofi track in C major at 80 bpm, 4 bars').key, 'C');
+  assert.equal(parsePrompt('an energetic edm track').key, 'C');
+});
+
+test('parsePrompt still extracts an explicit "in <key> <mode>" key correctly', () => {
+  assert.equal(parsePrompt('a ballad in A minor at 90 bpm').key, 'A');
+  assert.equal(parsePrompt('a ballad in A minor at 90 bpm').mode, 'minor');
+  assert.equal(parsePrompt('a cinematic piece in the key of D').key, 'D');
+  assert.equal(parsePrompt('a rock track, key of E minor').key, 'E');
+});
+
+test('parsePrompt normalizes flat key spellings to their sharp enharmonic equivalent', () => {
+  assert.equal(parsePrompt('a jazz tune in Bb minor').key, 'A#');
+  assert.equal(parsePrompt('a jazz tune in Bb minor').mode, 'minor');
+  assert.equal(parsePrompt('a pop song in Eb major').key, 'D#');
+  assert.equal(parsePrompt('a ballad in Db').key, 'C#');
+});
+
+test('detectNoDrums / detectNoBass recognize explicit negative instrument requests', () => {
+  assert.equal(detectNoDrums('a lofi beat with no drums'), true);
+  assert.equal(detectNoDrums('an ambient, drumless piece'), true);
+  assert.equal(detectNoDrums('a normal rock track'), undefined);
+  assert.equal(detectNoBass('an ambient track without bass'), true);
+  assert.equal(detectNoBass('a bassless intro'), true);
+  assert.equal(detectNoBass('a normal rock track'), undefined);
+});
+
+test('parsePrompt carries noDrums/noBass onto the spec', () => {
+  const spec = parsePrompt('a cinematic piece with no drums and no bass');
+  assert.equal(spec.noDrums, true);
+  assert.equal(spec.noBass, true);
+  assert.equal(parsePrompt('a normal rock track').noDrums, undefined);
+});
+
+test('detectTimeSignature recognizes 3/4 and the word "waltz", defaults everything else to undefined', () => {
+  assert.deepEqual(detectTimeSignature('a piece in 3/4 time'), [3, 4]);
+  assert.deepEqual(detectTimeSignature('a slow waltz for piano'), [3, 4]);
+  assert.deepEqual(detectTimeSignature('a track in 4/4 time'), [4, 4]);
+  assert.equal(detectTimeSignature('a track in 6/8 time'), undefined); // honestly unsupported, not faked
+  assert.equal(detectTimeSignature('a normal rock track'), undefined);
+});
+
+test('parsePrompt carries the detected time signature onto the spec', () => {
+  assert.deepEqual(parsePrompt('a classical waltz at 90 bpm').timeSignature, [3, 4]);
+  assert.equal(parsePrompt('a normal rock track').timeSignature, undefined);
+});
+
+test('buildSystemPrompt mentions no-drums/no-bass/waltz when present on the spec', () => {
+  const spec = { ...parsePrompt('a classical waltz'), noDrums: true, noBass: true };
+  const prompt = buildSystemPrompt(spec);
+  assert.match(prompt, /no drums/i);
+  assert.match(prompt, /no bass/i);
+  assert.match(prompt, /3\/4 waltz/i);
 });

@@ -63,4 +63,10 @@ test('createGenerationSpec applies sensible defaults', () => {
   const spec = createGenerationSpec({});
   assert.equal(spec.genre, 'ambient');
   assert.equal(spec.bars, 8);
+  assert.deepEqual(spec.timeSignature, [4, 4]);
+});
+
+test('createGenerationSpec carries through an explicit time signature', () => {
+  const spec = createGenerationSpec({ timeSignature: [3, 4] });
+  assert.deepEqual(spec.timeSignature, [3, 4]);
 });

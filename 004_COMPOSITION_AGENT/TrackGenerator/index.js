@@ -134,9 +134,14 @@ function humanizeTiming(start, rng, amountBeats = 0.02) {
   return Math.max(0, start + (rng() * 2 - 1) * amountBeats);
 }
 
+function beatsPerBarOf(spec) {
+  const [beatsPerBar] = spec.timeSignature ?? [4, 4];
+  return beatsPerBar === 3 ? 3 : 4; // only these two are actually supported (see Guardrails)
+}
+
 function generateMelody(spec, rng, chords) {
   const root = keyToMidiRoot(spec.key, 5);
-  const stepsPerBar = 4;
+  const stepsPerBar = beatsPerBarOf(spec);
   const totalSteps = spec.bars * stepsPerBar;
   let degree = 0;
   const notes = [];
@@ -181,7 +186,7 @@ function generateMelody(spec, rng, chords) {
 }
 
 function generateChordsTrack(spec, rng, chords) {
-  const stepsPerBar = 4;
+  const stepsPerBar = beatsPerBarOf(spec);
   const notes = [];
 
   for (const { bar, pitches } of chords) {
@@ -210,7 +215,7 @@ function generateChordsTrack(spec, rng, chords) {
 
 function generateBassline(spec, rng, chords) {
   const root = keyToMidiRoot(spec.key, 2);
-  const stepsPerBar = 4;
+  const stepsPerBar = beatsPerBarOf(spec);
   const notes = [];
 
   for (const { bar, degreeIndex } of chords) {
@@ -243,8 +248,48 @@ function isFillBar(bar, totalBars) {
   return isPhraseEnd || isLastBar;
 }
 
+// A real, distinct 3/4 "oom-pah-pah" waltz feel: a kick on the strong
+// downbeat and hi-hats (a snare on fill bars) marking the two weaker
+// beats — rhythmically different from the 4/4 backbeat pattern below, not
+// the same pattern just truncated to fewer steps.
+function generateWaltzDrumPattern(spec, rng) {
+  const notes = [];
+  for (let bar = 0; bar < spec.bars; bar += 1) {
+    const fill = isFillBar(bar, spec.bars);
+    const barStart = bar * 3;
+    notes.push(createNote({ pitch: DRUM_PITCHES.kick, start: barStart, duration: 0.4, velocity: 110 }));
+    if (rng() > 0.4) {
+      notes.push(createNote({ pitch: DRUM_PITCHES.hihat, start: barStart, duration: 0.15, velocity: 50 }));
+    }
+    for (let beat = 1; beat < 3; beat += 1) {
+      if (fill) {
+        notes.push(
+          createNote({
+            pitch: DRUM_PITCHES.snare,
+            start: barStart + beat,
+            duration: 0.3,
+            velocity: 75 + Math.floor(rng() * 20),
+          })
+        );
+      } else {
+        notes.push(
+          createNote({
+            pitch: DRUM_PITCHES.hihat,
+            start: barStart + beat,
+            duration: 0.2,
+            velocity: 55 + Math.floor(rng() * 15),
+          })
+        );
+      }
+    }
+  }
+  return createTrack({ name: 'drums', instrument: 'percussion', waveform: 'square', notes, gain: 0.4 });
+}
+
 function generateDrumPattern(spec, rng) {
-  const stepsPerBar = 8; // eighth notes
+  if (beatsPerBarOf(spec) === 3) return generateWaltzDrumPattern(spec, rng);
+
+  const stepsPerBar = 8; // eighth notes, 2 per beat over a 4-beat bar
   const notes = [];
 
   for (let bar = 0; bar < spec.bars; bar += 1) {
@@ -294,7 +339,7 @@ function clampPitchToRange(pitch, minMidi, maxMidi) {
 // not clone its timbre.
 function generateVocalLine(spec, rng, voiceProfile) {
   const root = keyToMidiRoot(spec.key, 4);
-  const stepsPerBar = 4;
+  const stepsPerBar = beatsPerBarOf(spec);
   const totalSteps = spec.bars * stepsPerBar;
 
   let minMidi = 57; // A3 fallback
@@ -326,12 +371,12 @@ function generateComposition(spec, { seed } = {}) {
   const rng = createRng(rngSeed);
 
   const chords = generateChordProgression(spec);
-  const tracks = [
-    generateMelody(spec, rng, chords),
-    generateChordsTrack(spec, rng, chords),
-    generateBassline(spec, rng, chords),
-    generateDrumPattern(spec, rng),
-  ];
+  const tracks = [generateMelody(spec, rng, chords), generateChordsTrack(spec, rng, chords)];
+
+  // noDrums/noBass default to false (see Guardrails.validateSpec), so
+  // callers that never mention them keep the original full-band output.
+  if (spec.noBass !== true) tracks.push(generateBassline(spec, rng, chords));
+  if (spec.noDrums !== true) tracks.push(generateDrumPattern(spec, rng));
 
   // instrumental must be explicitly false to opt into a vocal line, so
   // callers that never mention it (existing specs/tests) keep the
@@ -345,6 +390,7 @@ function generateComposition(spec, { seed } = {}) {
     tempo: spec.tempo,
     key: spec.key,
     mode: spec.mode,
+    timeSignature: spec.timeSignature ?? [4, 4],
     bars: spec.bars,
     tracks,
     reverb: reverbFor(spec.genre),
@@ -360,6 +406,7 @@ module.exports = {
   buildChord,
   generateChordProgression,
   dynamicsCurve,
+  beatsPerBarOf,
   pitchHzToMidi,
   clampPitchToRange,
   generateMelody,
@@ -367,6 +414,7 @@ module.exports = {
   generateBassline,
   isFillBar,
   generateDrumPattern,
+  generateWaltzDrumPattern,
   generateVocalLine,
   generateComposition,
 };

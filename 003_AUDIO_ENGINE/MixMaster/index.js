@@ -167,6 +167,91 @@ function applyReverbStereo(left, right, sampleRate, options = {}) {
   };
 }
 
+// Real biquad EQ, using Robert Bristow-Johnson's Audio EQ Cookbook formulas
+// (the standard reference derivation for these filters, used throughout
+// real audio software) — a genuine second-order IIR filter with actual
+// frequency-selective gain, not a fake per-band multiply on the raw
+// waveform. Direct Form I.
+function biquadCoefficients(type, freq, sampleRate, gainDb, q = 0.707) {
+  if (freq <= 0 || freq >= sampleRate / 2) throw new RangeError('freq must be between 0 and the Nyquist frequency');
+  const A = 10 ** (gainDb / 40);
+  const w0 = (2 * Math.PI * freq) / sampleRate;
+  const cosw0 = Math.cos(w0);
+  const sinw0 = Math.sin(w0);
+  const alpha = sinw0 / (2 * q);
+
+  let b0, b1, b2, a0, a1, a2;
+
+  if (type === 'lowshelf') {
+    const sqrtAlpha = 2 * Math.sqrt(A) * alpha;
+    b0 = A * (A + 1 - (A - 1) * cosw0 + sqrtAlpha);
+    b1 = 2 * A * (A - 1 - (A + 1) * cosw0);
+    b2 = A * (A + 1 - (A - 1) * cosw0 - sqrtAlpha);
+    a0 = A + 1 + (A - 1) * cosw0 + sqrtAlpha;
+    a1 = -2 * (A - 1 + (A + 1) * cosw0);
+    a2 = A + 1 + (A - 1) * cosw0 - sqrtAlpha;
+  } else if (type === 'highshelf') {
+    const sqrtAlpha = 2 * Math.sqrt(A) * alpha;
+    b0 = A * (A + 1 + (A - 1) * cosw0 + sqrtAlpha);
+    b1 = -2 * A * (A - 1 + (A + 1) * cosw0);
+    b2 = A * (A + 1 + (A - 1) * cosw0 - sqrtAlpha);
+    a0 = A + 1 - (A - 1) * cosw0 + sqrtAlpha;
+    a1 = 2 * (A - 1 - (A + 1) * cosw0);
+    a2 = A + 1 - (A - 1) * cosw0 - sqrtAlpha;
+  } else if (type === 'peaking') {
+    b0 = 1 + alpha * A;
+    b1 = -2 * cosw0;
+    b2 = 1 - alpha * A;
+    a0 = 1 + alpha / A;
+    a1 = -2 * cosw0;
+    a2 = 1 - alpha / A;
+  } else {
+    throw new Error(`unknown biquad type: ${type}`);
+  }
+
+  return { b0: b0 / a0, b1: b1 / a0, b2: b2 / a0, a1: a1 / a0, a2: a2 / a0 };
+}
+
+function applyBiquad(buffer, coeffs) {
+  const { b0, b1, b2, a1, a2 } = coeffs;
+  const out = new Float32Array(buffer.length);
+  let x1 = 0;
+  let x2 = 0;
+  let y1 = 0;
+  let y2 = 0;
+  for (let i = 0; i < buffer.length; i += 1) {
+    const x0 = buffer[i];
+    const y0 = b0 * x0 + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2;
+    out[i] = y0;
+    x2 = x1;
+    x1 = x0;
+    y2 = y1;
+    y1 = y0;
+  }
+  return out;
+}
+
+// A practical 3-band EQ built from three biquads in series: a low-shelf
+// for bass, a peaking/bell for mids, and a high-shelf for treble/air.
+// Each gain is in dB and defaults to 0 (bypassed) so a caller that doesn't
+// touch EQ gets output byte-identical to before this feature existed —
+// a band whose gain is exactly 0 is skipped entirely rather than run
+// through a nominally-transparent filter that could still add floating-
+// point noise.
+const EQ_BANDS = { bassFreq: 200, midFreq: 1000, trebleFreq: 4000, midQ: 0.8 };
+
+function applyEq(buffer, sampleRate, { bassDb = 0, midDb = 0, trebleDb = 0 } = {}) {
+  let out = buffer;
+  if (bassDb !== 0) out = applyBiquad(out, biquadCoefficients('lowshelf', EQ_BANDS.bassFreq, sampleRate, bassDb));
+  if (midDb !== 0) out = applyBiquad(out, biquadCoefficients('peaking', EQ_BANDS.midFreq, sampleRate, midDb, EQ_BANDS.midQ));
+  if (trebleDb !== 0) out = applyBiquad(out, biquadCoefficients('highshelf', EQ_BANDS.trebleFreq, sampleRate, trebleDb));
+  return out;
+}
+
+function applyEqStereo(left, right, sampleRate, options = {}) {
+  return { left: applyEq(left, sampleRate, options), right: applyEq(right, sampleRate, options) };
+}
+
 module.exports = {
   mixBuffers,
   peak,
@@ -181,4 +266,9 @@ module.exports = {
   allpassFilter,
   applyReverb,
   applyReverbStereo,
+  biquadCoefficients,
+  applyBiquad,
+  EQ_BANDS,
+  applyEq,
+  applyEqStereo,
 };

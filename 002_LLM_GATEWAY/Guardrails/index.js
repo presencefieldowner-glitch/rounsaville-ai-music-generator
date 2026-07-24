@@ -7,6 +7,14 @@ const BANNED_TERMS = ['copyrighted sample', 'stolen stems'];
 
 const ALLOWED_KEYS = ['A', 'A#', 'B', 'C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#'];
 const ALLOWED_MODES = ['major', 'minor'];
+// The only two time signatures TrackGenerator actually produces distinct
+// rhythmic content for (see its beatsPerBar-driven grid and the separate
+// waltz drum pattern) — anything else falls back to 4/4 rather than being
+// silently accepted and rendered wrong.
+const ALLOWED_TIME_SIGNATURES = [
+  [4, 4],
+  [3, 4],
+];
 
 const MIN_VOICE_HZ = 50;
 const MAX_VOICE_HZ = 1000;
@@ -48,12 +56,20 @@ function validateVoiceProfile(voiceProfile) {
   };
 }
 
+function validateTimeSignature(timeSignature) {
+  if (!Array.isArray(timeSignature)) return [4, 4];
+  const match = ALLOWED_TIME_SIGNATURES.find(([beats, unit]) => beats === timeSignature[0] && unit === timeSignature[1]);
+  return match ?? [4, 4];
+}
+
 function validateSpec(spec) {
   if (!spec || typeof spec !== 'object') throw new TypeError('spec must be an object');
 
   const key = ALLOWED_KEYS.includes(spec.key) ? spec.key : 'C';
   const mode = ALLOWED_MODES.includes(spec.mode) ? spec.mode : 'major';
   const instrumental = typeof spec.instrumental === 'boolean' ? spec.instrumental : undefined;
+  const noDrums = spec.noDrums === true;
+  const noBass = spec.noBass === true;
 
   return {
     ...spec,
@@ -61,7 +77,10 @@ function validateSpec(spec) {
     mode,
     tempo: clamp(Number(spec.tempo) || 100, 40, 220),
     bars: Math.round(clamp(Number(spec.bars) || 8, 1, 64)),
+    timeSignature: validateTimeSignature(spec.timeSignature),
     instrumental,
+    noDrums,
+    noBass,
     voiceProfile: validateVoiceProfile(spec.voiceProfile),
   };
 }
@@ -71,9 +90,11 @@ module.exports = {
   BANNED_TERMS,
   ALLOWED_KEYS,
   ALLOWED_MODES,
+  ALLOWED_TIME_SIGNATURES,
   MIN_VOICE_HZ,
   MAX_VOICE_HZ,
   sanitizePrompt,
   validateSpec,
   validateVoiceProfile,
+  validateTimeSignature,
 };

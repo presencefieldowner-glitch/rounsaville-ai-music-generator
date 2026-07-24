@@ -65,6 +65,7 @@ test('getIndexHtml includes the lyrics section wired to /api/lyrics with an hone
   const html = getIndexHtml();
   assert.match(html, /id="generateLyrics"/);
   assert.match(html, /id="lyricsSections"/);
+  assert.match(html, /id="lyricsTitle"/);
   assert.match(html, /\/api\/lyrics/);
   assert.match(html, /not[\s\S]{0,20}an LLM/i);
   assert.match(html, /never sung/i);
@@ -77,6 +78,25 @@ test('getIndexHtml derives the voice-recording phrases from generated lyrics rat
   assert.match(html, /currentPhrases/);
   // The fallback phrases still exist for before any lyrics are generated.
   assert.equal(VOICE_PHRASES.length, 3);
+});
+
+test('getIndexHtml includes the 3-band EQ sliders wired into payload.eq', () => {
+  const html = getIndexHtml();
+  assert.match(html, /id="bassDb"/);
+  assert.match(html, /id="midDb"/);
+  assert.match(html, /id="trebleDb"/);
+  assert.match(html, /payload\.eq = /);
+  assert.match(html, /Audio EQ Cookbook/i);
+});
+
+test('getIndexHtml includes No drums / No bass / Waltz controls wired into the prompt and payload', () => {
+  const html = getIndexHtml();
+  assert.match(html, /id="noDrums"/);
+  assert.match(html, /id="noBass"/);
+  assert.match(html, /id="waltz"/);
+  assert.match(html, /payload\.noDrums = true/);
+  assert.match(html, /payload\.noBass = true/);
+  assert.match(html, /payload\.timeSignature = \[3, 4\]/);
 });
 
 test('startWebUI serves the page at / and 404s elsewhere', async () => {
@@ -132,6 +152,33 @@ test('apiProxyTarget also forwards /api/lyrics, returning real lyrics + recordin
     const body = await res.json();
     assert.ok(body.lyrics.lines.length > 0);
     assert.equal(body.recordingPhrases.length, 3);
+  } finally {
+    await new Promise((resolve) => uiServer.close(resolve));
+    await new Promise((resolve) => apiServer.close(resolve));
+  }
+});
+
+test('apiProxyTarget forwards eq/noDrums/timeSignature through /api/generate end to end', async () => {
+  const { startServer } = require('../../REST_API');
+  const { server: apiServer } = await startServer(0);
+  const apiPort = apiServer.address().port;
+
+  const uiServer = await startWebUI(0, { apiProxyTarget: `http://127.0.0.1:${apiPort}` });
+  const uiPort = uiServer.address().port;
+
+  try {
+    const res = await fetch(`http://127.0.0.1:${uiPort}/api/generate`, {
+      method: 'POST',
+      body: JSON.stringify({
+        prompt: 'a classical waltz at 100 bpm, 8 bars',
+        noDrums: true,
+        eq: { bassDb: 8 },
+      }),
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.deepEqual(body.composition.timeSignature, [3, 4]);
+    assert.equal(body.composition.tracks.find((t) => t.name === 'drums'), undefined);
   } finally {
     await new Promise((resolve) => uiServer.close(resolve));
     await new Promise((resolve) => apiServer.close(resolve));

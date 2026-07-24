@@ -30,12 +30,42 @@ packages, so `npm install` never touches the network:
   **not an LLM** (there's no network access to one here): mad-libs-style
   line templates filled from mood-tagged word banks, closed by true rhymes
   (hand-grouped by actual sound, e.g. `night`/`light`/`flight`, not
-  spelling) in an ABCB stanza scheme. It shares the same seed as the audio
-  composition, so regenerating with a given seed reproduces identical
-  lyrics too. **This does not produce sung vocals**: nothing in this
-  codebase does text-to-singing-voice synthesis — `TrackGenerator`'s
-  "vocal" track is a wordless, pitch-matched melody line, not these words
-  being sung.
+  spelling) in an ABCB stanza scheme, plus a short "Adjective Noun" song
+  title (e.g. "Golden Morning") drawn from the same mood word bank. It
+  shares the same seed as the audio composition, so regenerating with a
+  given seed reproduces identical lyrics (and title) too. **This does not
+  produce sung vocals**: nothing in this codebase does text-to-singing-
+  voice synthesis — `TrackGenerator`'s "vocal" track is a wordless,
+  pitch-matched melody line, not these words being sung.
+
+  `PromptEngine`'s key-detection regex had a real correctness bug, since
+  fixed: the original pattern (`/\b([A-G](?:#|b)?)\s*(major|minor)?\b/i`)
+  matched a bare leading article "a"/"A" as the musical key under the
+  case-insensitive flag, so "a lofi track in C major" was silently parsed
+  as key A, not C — found and fixed as part of this pass, not by design.
+  The fix anchors key detection to an explicit "in \<key\>" / "key of
+  \<key\>" context, and normalizes flat spellings ("Bb minor") to their
+  sharp enharmonic equivalent ("A#" — see `Guardrails.ALLOWED_KEYS`,
+  which only recognizes sharps) instead of silently falling back to the
+  default key.
+
+  `PromptEngine` also detects two negative instrument constraints ("no
+  drums"/"drumless", "no bass"/"bassless") and a real 3/4 waltz time
+  signature ("waltz" or literal "3/4"), all threaded through
+  `Guardrails.validateSpec` (which only accepts the two time signatures
+  `TrackGenerator` actually renders distinctly — 4/4 and 3/4 — falling
+  back to 4/4 for anything else, including 6/8, rather than silently
+  claiming to support a feel nothing plays differently for) down into
+  `TrackGenerator`: `noDrums`/`noBass` omit those tracks entirely, and 3/4
+  drives a genuinely different rhythm grid (3 beats per bar instead of 4)
+  plus a distinct "oom-pah-pah" waltz drum pattern (kick on the downbeat,
+  hi-hats on the two weaker beats), not just a metadata label — verified
+  by asserting the actual bar-to-bar note spacing and by comparing
+  rendered WAV duration against an equivalent 4/4 piece via
+  `AudioRenderer`. Every one of these composable with an explicit
+  `body.<field>` override in `GenerationPipeline`/`REST_API`/Netlify
+  (mirroring how `instrumental` already worked), so a UI toggle wins over
+  whatever the prompt text says.
 - **Audio Engine**: `SynthEngine` has four phase-based oscillators
   (sine/square/saw/triangle) with a real ADSR envelope, plus two
   genuinely different synthesis techniques for richer timbre: `pad`
@@ -45,7 +75,25 @@ packages, so `npm install` never touches the network:
   comes from, not a sample or a synthetic fade). `AudioRenderer` renders
   a `Composition` into PCM, encodes a playable 16-bit WAV, and decodes
   one back (used to read uploaded voice recordings); `MixMaster` mixes,
-  normalizes, and soft-limits buffers. `VoiceProfiler` does real (if
+  normalizes, and soft-limits buffers, and now also has a real 3-band EQ
+  (`applyEq`/`applyEqStereo`): second-order biquad filters using Robert
+  Bristow-Johnson's Audio EQ Cookbook formulas (the standard reference
+  derivation used throughout real audio software) — a low-shelf for bass
+  (200Hz), a peaking/bell for mids (1kHz), and a high-shelf for
+  treble/air (4kHz), each an actual frequency-selective IIR filter, not a
+  cosmetic per-band multiply on the raw waveform. A band at exactly 0dB is
+  skipped entirely rather than run through a nominally-transparent filter,
+  so a caller that never touches EQ gets byte-identical output to before
+  this feature existed. Verified independently of MixMaster's own math: a
+  single-frequency DFT computed directly in the test file confirms a bass
+  boost actually raises low-frequency magnitude (and roughly leaves
+  treble alone), a treble cut lowers high-frequency magnitude (and
+  roughly leaves bass alone), and a mid boost affects 1kHz measurably
+  more than either extreme. Wired into `GenerationPipeline` as an
+  optional `eq: { bassDb, midDb, trebleDb }` request param (each clamped
+  to +/-12dB) applied after pitch/tempo processing and before final
+  loudness normalization — real mastering-chain order — and exposed as
+  three sliders in the WebUI. `VoiceProfiler` does real (if
   basic) voice analysis — autocorrelation pitch detection and a
   spectral-centroid "brightness" estimate — to measure a speaker's
   actual pitch range. **This is not neural voice cloning**: no ML
@@ -124,10 +172,10 @@ packages, so `npm install` never touches the network:
   `lyrics` field generated with that same request's seed.
 
   `WebUI` has a **Lyrics** section: a "Generate Lyrics" button that calls
-  `/api/lyrics` and renders the verse/chorus text, plus an always-visible,
-  in-product disclaimer (not just documentation) that this is real
-  template + rhyme generation, not an LLM, and that the words are never
-  sung by the generated audio since there's no text-to-singing-voice
+  `/api/lyrics` and renders the song title plus verse/chorus text, plus an
+  always-visible, in-product disclaimer (not just documentation) that this
+  is real template + rhyme generation, not an LLM, and that the words are
+  never sung by the generated audio since there's no text-to-singing-voice
   synthesis anywhere in this system. Generating a full track also
   refreshes the lyrics (via the same seed, so they match exactly). The
   Voice Profile section's recording phrases are then derived from those
@@ -136,6 +184,13 @@ packages, so `npm install` never touches the network:
   against the real words the user would say — with its own disclaimer
   reiterating that this still doesn't make the output audio pronounce
   those words or clone voice timbre.
+
+  The Studio section also has Bass/Mid/Treble EQ sliders (+/-12dB, wired
+  to `MixMaster`'s real biquad EQ) and three checkboxes — No drums, No
+  bass, Waltz (3/4 time) — each backed by a real behavioral change
+  (dropped tracks, a genuinely different rhythm grid and drum pattern),
+  not cosmetic labels; unchecked/neutral defaults keep byte-identical
+  output to before these controls existed.
 
   `WebUI` is a single-page studio (style/BPM/bars/instrumental controls,
   seed display + "regenerate with same seed", a download-as-file link,

@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { sanitizePrompt, validateSpec, validateVoiceProfile } = require('../index.js');
+const { sanitizePrompt, validateSpec, validateVoiceProfile, validateTimeSignature } = require('../index.js');
 
 test('sanitizePrompt trims and length-caps input', () => {
   const result = sanitizePrompt('  hello world  ');
@@ -60,4 +60,29 @@ test('validateSpec sanitizes a voiceProfile nested in the spec', () => {
   const spec = validateSpec({ voiceProfile: { minPitchHz: 1, maxPitchHz: 5000 } });
   assert.equal(spec.voiceProfile.minPitchHz, 50);
   assert.equal(spec.voiceProfile.maxPitchHz, 1000);
+});
+
+test('validateTimeSignature only accepts the two real supported signatures, defaulting to 4/4', () => {
+  assert.deepEqual(validateTimeSignature([4, 4]), [4, 4]);
+  assert.deepEqual(validateTimeSignature([3, 4]), [3, 4]);
+  assert.deepEqual(validateTimeSignature([6, 8]), [4, 4]); // honestly unsupported, not silently accepted
+  assert.deepEqual(validateTimeSignature(undefined), [4, 4]);
+  assert.deepEqual(validateTimeSignature('nonsense'), [4, 4]);
+});
+
+test('validateSpec validates a nested time signature and defaults noDrums/noBass to false', () => {
+  const withWaltz = validateSpec({ timeSignature: [3, 4] });
+  assert.deepEqual(withWaltz.timeSignature, [3, 4]);
+  const withGarbage = validateSpec({ timeSignature: [7, 8] });
+  assert.deepEqual(withGarbage.timeSignature, [4, 4]);
+  const bare = validateSpec({});
+  assert.deepEqual(bare.timeSignature, [4, 4]);
+  assert.equal(bare.noDrums, false);
+  assert.equal(bare.noBass, false);
+});
+
+test('validateSpec passes real noDrums/noBass booleans through', () => {
+  const spec = validateSpec({ noDrums: true, noBass: true });
+  assert.equal(spec.noDrums, true);
+  assert.equal(spec.noBass, true);
 });

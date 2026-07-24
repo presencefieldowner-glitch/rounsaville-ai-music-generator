@@ -12,11 +12,15 @@ const {
   buildChord,
   generateChordProgression,
   dynamicsCurve,
+  beatsPerBarOf,
   pitchHzToMidi,
   clampPitchToRange,
   isFillBar,
+  generateDrumPattern,
+  generateWaltzDrumPattern,
   generateComposition,
 } = require('../index.js');
+const { secondsPerBeat } = require('../../../003_AUDIO_ENGINE/AudioRenderer');
 
 const spec = { genre: 'lofi', mood: 'calm', tempo: 90, key: 'C', mode: 'major', bars: 4 };
 
@@ -221,4 +225,71 @@ test('drum fills add a snare roll on phrase-end/final bars instead of the single
   assert.equal(snaresInBar(1), 2);
   assert.equal(snaresInBar(2), 2);
   assert.equal(snaresInBar(3), 4); // fill bar (phrase end + final bar): snare roll
+});
+
+test('beatsPerBarOf reads the spec time signature, defaulting to 4/4 for anything unrecognized', () => {
+  assert.equal(beatsPerBarOf({ ...spec, timeSignature: [3, 4] }), 3);
+  assert.equal(beatsPerBarOf({ ...spec, timeSignature: [4, 4] }), 4);
+  assert.equal(beatsPerBarOf({ ...spec }), 4); // no timeSignature at all
+  assert.equal(beatsPerBarOf({ ...spec, timeSignature: [7, 8] }), 4); // unsupported -> honest fallback
+});
+
+test('a 3/4 composition actually has 3 beats per bar worth of chord/bass timing, not 4', () => {
+  const waltzSpec = { ...spec, timeSignature: [3, 4], bars: 4 };
+  const composition = generateComposition(waltzSpec, { seed: 3 });
+  const bass = composition.tracks.find((t) => t.name === 'bass');
+  // One bass note per bar, spaced 3 beats apart (not 4, as a plain 4/4
+  // composition would be) — proves the rhythm grid actually changed, not
+  // just the reported timeSignature metadata.
+  bass.notes.forEach((note, i) => assert.equal(note.start, i * 3));
+  assert.deepEqual(composition.timeSignature, [3, 4]);
+});
+
+test('generateWaltzDrumPattern produces a genuinely different rhythmic feel than the 4/4 pattern: one kick per bar on the downbeat, weaker beats 2/3 in hihat', () => {
+  const waltzSpec = { ...spec, timeSignature: [3, 4], bars: 4 };
+  const drums = generateDrumPattern(waltzSpec, () => 0.9); // rng > thresholds -> no extra hihat/fills beyond the base pattern
+  const kicks = drums.notes.filter((n) => n.pitch === 36);
+  assert.equal(kicks.length, 4); // exactly one kick per bar
+  kicks.forEach((kick, bar) => assert.equal(kick.start, bar * 3)); // kick lands on the downbeat of each 3-beat bar
+  const hihats = drums.notes.filter((n) => n.pitch === 42);
+  assert.ok(hihats.length > 0, 'expected hi-hats marking the weaker beats');
+});
+
+test('generateWaltzDrumPattern gives fill bars a snare on beats 2/3 instead of hihat', () => {
+  const composition = generateWaltzDrumPattern({ ...spec, timeSignature: [3, 4], bars: 4 }, () => 0.9);
+  const lastBarSnares = composition.notes.filter((n) => n.pitch === 38 && n.start >= 3 * 3);
+  assert.equal(lastBarSnares.length, 2); // beats 2 and 3 of the final (fill) bar
+});
+
+test('noDrums/noBass omit those tracks entirely; both default to included when unset', () => {
+  const full = generateComposition({ ...spec }, { seed: 1 });
+  assert.ok(full.tracks.find((t) => t.name === 'drums'));
+  assert.ok(full.tracks.find((t) => t.name === 'bass'));
+
+  const noDrums = generateComposition({ ...spec, noDrums: true }, { seed: 1 });
+  assert.equal(noDrums.tracks.find((t) => t.name === 'drums'), undefined);
+  assert.ok(noDrums.tracks.find((t) => t.name === 'bass')); // unaffected
+
+  const noBass = generateComposition({ ...spec, noBass: true }, { seed: 1 });
+  assert.equal(noBass.tracks.find((t) => t.name === 'bass'), undefined);
+  assert.ok(noBass.tracks.find((t) => t.name === 'drums')); // unaffected
+
+  const neither = generateComposition({ ...spec, noDrums: true, noBass: true }, { seed: 1 });
+  assert.equal(neither.tracks.find((t) => t.name === 'drums'), undefined);
+  assert.equal(neither.tracks.find((t) => t.name === 'bass'), undefined);
+  assert.ok(isValidComposition(neither)); // still a well-formed composition with fewer tracks
+});
+
+test('generateComposition carries the time signature onto the rendered composition, defaulting to 4/4', () => {
+  assert.deepEqual(generateComposition({ ...spec }, { seed: 1 }).timeSignature, [4, 4]);
+  assert.deepEqual(generateComposition({ ...spec, timeSignature: [3, 4] }, { seed: 1 }).timeSignature, [3, 4]);
+});
+
+test('a 3/4 composition renders to a duration consistent with 3 beats per bar via AudioRenderer', () => {
+  const waltzSpec = { ...spec, tempo: 120, timeSignature: [3, 4], bars: 8 };
+  const composition = generateComposition(waltzSpec, { seed: 5 });
+  const expectedSeconds = composition.bars * 3 * secondsPerBeat(composition.tempo);
+  const fourFourEquivalent = generateComposition({ ...spec, tempo: 120, bars: 8 }, { seed: 5 });
+  const fourFourSeconds = fourFourEquivalent.bars * 4 * secondsPerBeat(fourFourEquivalent.tempo);
+  assert.ok(expectedSeconds < fourFourSeconds, '8 bars of 3/4 should be shorter in real time than 8 bars of 4/4 at the same tempo');
 });

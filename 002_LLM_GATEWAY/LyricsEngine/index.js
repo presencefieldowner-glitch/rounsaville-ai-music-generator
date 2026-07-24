@@ -132,11 +132,26 @@ function makeStanza(rng, moodKey) {
   };
 }
 
+function capitalize(word) {
+  return word.charAt(0).toUpperCase() + word.slice(1);
+}
+
+// A short, real (if simple) song title drawn from the same mood word bank
+// as the lyrics themselves, so it's thematically consistent rather than a
+// generic placeholder — "Golden Morning" for a happy song, "Hollow Mirror"
+// for a dark one, etc. Same honest caveat as everything else here: a
+// two-word Adjective+Noun template, not an LLM composing a clever title.
+function generateTitle(rng, moodKey) {
+  const words = MOOD_WORDS[moodKey] ?? MOOD_WORDS.neutral;
+  return `${capitalize(pick(rng, words.adjectives))} ${capitalize(pick(rng, words.nouns))}`;
+}
+
 // Song length loosely scales section count with bar count: short pieces
 // get verse+chorus, longer ones get verse+chorus+verse+chorus.
 function generateLyrics(spec, { seed } = {}) {
   const rng = createRng(seed ?? hashStringToSeed(`lyrics:${JSON.stringify(spec)}`));
   const moodKey = MOOD_WORDS[spec.mood] ? spec.mood : 'neutral';
+  const title = generateTitle(rng, moodKey);
 
   const verse = makeStanza(rng, moodKey);
   const chorus = makeStanza(rng, moodKey);
@@ -150,7 +165,7 @@ function generateLyrics(spec, { seed } = {}) {
     sections.push({ type: 'chorus', lines: chorus.lines, rhymeFamily: chorus.rhymeFamily }); // reprise, same text
   }
 
-  return { mood: moodKey, sections, lines: sections.flatMap((s) => s.lines) };
+  return { title, mood: moodKey, sections, lines: sections.flatMap((s) => s.lines) };
 }
 
 // Derives concrete phrases for the voice-recording flow from the actual
@@ -173,6 +188,7 @@ module.exports = {
   MOOD_WORDS,
   FREE_LINES,
   RHYME_FAMILIES,
+  generateTitle,
   generateLyrics,
   deriveRecordingPhrases,
 };

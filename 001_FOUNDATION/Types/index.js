@@ -80,8 +80,9 @@ function createGenerationSpec({
   key = 'C',
   mode = 'major',
   bars = 8,
+  timeSignature = [4, 4],
 }) {
-  return { genre, mood, tempo, key, mode, bars };
+  return { genre, mood, tempo, key, mode, bars, timeSignature };
 }
 
 module.exports = {

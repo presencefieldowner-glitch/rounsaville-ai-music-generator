@@ -2,7 +2,8 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { RHYME_FAMILIES, generateLyrics, deriveRecordingPhrases } = require('../index.js');
+const { MOOD_WORDS, RHYME_FAMILIES, generateTitle, generateLyrics, deriveRecordingPhrases } = require('../index.js');
+const { createRng } = require('../../../001_FOUNDATION/Utilities');
 
 const spec = { genre: 'lofi', mood: 'happy', tempo: 90, key: 'C', mode: 'major', bars: 8 };
 
@@ -76,6 +77,32 @@ test('mood changes the vocabulary used (happy vs dark word banks are visibly dif
 test('an unknown mood falls back to the neutral word bank without throwing', () => {
   const lyrics = generateLyrics({ ...spec, mood: 'unknown-mood' }, { seed: 1 });
   assert.equal(lyrics.mood, 'neutral');
+});
+
+test('generateTitle produces a capitalized "Adjective Noun" title drawn from the mood word bank', () => {
+  const title = generateTitle(createRng(1), 'happy');
+  assert.match(title, /^[A-Z][a-z]+ [A-Z][a-z]+$/);
+  const [adjective, noun] = title.split(' ');
+  assert.ok(MOOD_WORDS.happy.adjectives.some((a) => a.toLowerCase() === adjective.toLowerCase()));
+  assert.ok(MOOD_WORDS.happy.nouns.some((n) => n.toLowerCase() === noun.toLowerCase()));
+});
+
+test('generateLyrics includes a title generated with the same seed, deterministically', () => {
+  const a = generateLyrics(spec, { seed: 15 });
+  const b = generateLyrics(spec, { seed: 15 });
+  assert.equal(a.title, b.title);
+  assert.match(a.title, /^[A-Z][a-z]+ [A-Z][a-z]+$/);
+});
+
+test('generateLyrics title vocabulary follows the mood, same as the lyrics themselves', () => {
+  const happyTitles = new Set();
+  const darkTitles = new Set();
+  for (let seed = 0; seed < 15; seed += 1) {
+    happyTitles.add(generateLyrics({ ...spec, mood: 'happy' }, { seed }).title);
+    darkTitles.add(generateLyrics({ ...spec, mood: 'dark' }, { seed }).title);
+  }
+  const overlap = [...happyTitles].filter((t) => darkTitles.has(t));
+  assert.equal(overlap.length, 0, 'happy and dark mood titles should draw from disjoint word banks');
 });
 
 test('deriveRecordingPhrases pulls real lines from the generated lyrics, not generic filler', () => {

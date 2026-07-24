@@ -14,7 +14,7 @@ const { parsePrompt } = require('../../002_LLM_GATEWAY/PromptEngine');
 const { createModelRouter } = require('../../002_LLM_GATEWAY/ModelRouter');
 const { generateComposition } = require('../TrackGenerator');
 const { renderComposition, interleaveStereo, encodeWav, decodeWav } = require('../../003_AUDIO_ENGINE/AudioRenderer');
-const { normalizeStereo, applyLimiterStereo, applyReverbStereo } = require('../../003_AUDIO_ENGINE/MixMaster');
+const { normalizeStereo, applyLimiterStereo, applyReverbStereo, applyEqStereo } = require('../../003_AUDIO_ENGINE/MixMaster');
 const { analyzeVoiceSample, buildVoiceProfile } = require('../../003_AUDIO_ENGINE/VoiceProfiler');
 const { pitchShift, timeStretch } = require('../../003_AUDIO_ENGINE/PhaseVocoder');
 const { generateLyrics, deriveRecordingPhrases } = require('../../002_LLM_GATEWAY/LyricsEngine');
@@ -26,6 +26,7 @@ const MAX_VOICE_SAMPLE_BASE64_LENGTH = 8_000_000;
 const MAX_PITCH_SEMITONES = 12; // +/- one octave
 const MIN_TEMPO_STRETCH = 0.5; // half speed
 const MAX_TEMPO_STRETCH = 2; // double speed
+const MAX_EQ_DB = 12; // per-band boost/cut ceiling for the 3-band EQ
 
 function defaultModelRouter() {
   const router = createModelRouter();
@@ -63,12 +64,17 @@ async function runGeneration(body, modelRouter) {
   const cleanPrompt = sanitizePrompt(body.prompt ?? '');
   const parsedSpec = parsePrompt(cleanPrompt);
   const seed = Number.isFinite(body.seed) ? Math.floor(body.seed) & MAX_SEED : Math.floor(Math.random() * MAX_SEED);
-  // An explicit body.instrumental (from a UI toggle) wins; otherwise fall
-  // back to whatever the prompt text itself said (see PromptEngine's
-  // detectInstrumental), which can also be undefined.
+  // An explicit body.<field> (from a UI toggle) wins; otherwise fall back
+  // to whatever the prompt text itself said (see PromptEngine's
+  // detectInstrumental/detectNoDrums/detectNoBass/detectTimeSignature),
+  // any of which can also be undefined, in which case validateSpec's
+  // defaults (include the track, 4/4) apply.
   const spec = validateSpec({
     ...parsedSpec,
     instrumental: body.instrumental ?? parsedSpec.instrumental,
+    noDrums: body.noDrums ?? parsedSpec.noDrums,
+    noBass: body.noBass ?? parsedSpec.noBass,
+    timeSignature: body.timeSignature ?? parsedSpec.timeSignature,
     voiceProfile: body.voiceProfile,
     seed,
   });
@@ -94,6 +100,22 @@ async function runGeneration(body, modelRouter) {
     const stretch = clamp(body.tempoStretch, MIN_TEMPO_STRETCH, MAX_TEMPO_STRETCH);
     processedLeft = timeStretch(processedLeft, sampleRate, stretch);
     processedRight = timeStretch(processedRight, sampleRate, stretch);
+  }
+
+  // Optional real 3-band biquad EQ (see MixMaster.applyEqStereo), tone-
+  // shaping before the final loudness stage so normalize/limit still see
+  // (and react to) the EQ'd peaks, matching real mastering-chain order.
+  if (body.eq && typeof body.eq === 'object') {
+    const eq = {
+      bassDb: Number.isFinite(body.eq.bassDb) ? clamp(body.eq.bassDb, -MAX_EQ_DB, MAX_EQ_DB) : 0,
+      midDb: Number.isFinite(body.eq.midDb) ? clamp(body.eq.midDb, -MAX_EQ_DB, MAX_EQ_DB) : 0,
+      trebleDb: Number.isFinite(body.eq.trebleDb) ? clamp(body.eq.trebleDb, -MAX_EQ_DB, MAX_EQ_DB) : 0,
+    };
+    if (eq.bassDb !== 0 || eq.midDb !== 0 || eq.trebleDb !== 0) {
+      const eqd = applyEqStereo(processedLeft, processedRight, sampleRate, eq);
+      processedLeft = eqd.left;
+      processedRight = eqd.right;
+    }
   }
 
   const normalized = normalizeStereo(processedLeft, processedRight);
@@ -138,4 +160,5 @@ module.exports = {
   MAX_PITCH_SEMITONES,
   MIN_TEMPO_STRETCH,
   MAX_TEMPO_STRETCH,
+  MAX_EQ_DB,
 };
