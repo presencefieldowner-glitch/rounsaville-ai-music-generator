@@ -139,6 +139,25 @@
   </p>
 </section>
 
+<section id="lyrics">
+  <h2>Lyrics</h2>
+  <p class="disclaimer">
+    Real, algorithmically generated lyrics &mdash; template-filled lines drawn from mood-themed
+    word banks, with true rhymes (grouped by actual sound, not spelling) closing every second
+    line. This is <strong>not</strong> an LLM. These words are <strong>never sung</strong> by the
+    generated audio: the "vocal" track is a wordless, pitch-matched melody line (see
+    003_AUDIO_ENGINE), since this system has no text-to-singing-voice synthesis. The phrases
+    below (under Voice Profile) are drawn directly from these lyrics so recording them measures
+    your pitch on the actual generated words &mdash; but it still does not make the output audio
+    pronounce them, and it does not clone your voice's timbre.
+  </p>
+  <button class="secondary" id="generateLyrics">Generate Lyrics</button>
+  <span id="lyricsStatus" style="margin-left:0.75rem; font-size:0.85rem; color:#9a9aa5;"></span>
+  <div id="lyricsOutput" hidden style="margin-top:0.75rem;">
+    <div id="lyricsSections"></div>
+  </div>
+</section>
+
 <section id="history">
   <h2>Track History</h2>
   <div class="stats">
@@ -157,7 +176,10 @@
     Recording calibrates the synthesizer's vocal <em>pitch range</em> to your voice by measuring
     it directly from the audio (autocorrelation pitch detection). This is <strong>not</strong>
     neural voice cloning or text-to-speech in your voice &mdash; it does not reproduce your
-    timbre, only the note range the vocal line stays within. Works best in Chrome/Edge.
+    timbre, only the note range the vocal line stays within. Works best in Chrome/Edge. Once
+    lyrics have been generated above, the phrases below become the actual generated lyric lines
+    &mdash; sing or say <em>those specific words</em> so the pitch measurement comes from your
+    real delivery of them, though the words themselves still won't be sung by the output audio.
   </p>
   <div id="phrases"></div>
   <div style="margin-top:0.75rem;">
@@ -197,6 +219,12 @@
   var seedValueEl = document.getElementById('seedValue');
   var lastSeed = null;
   var lastComposition = null;
+  // Fallback phrases (generic hum/spoken-phrase calibration) used until
+  // real lyrics have been generated; once they have, this is replaced
+  // with deriveRecordingPhrases' output (actual generated lyric lines).
+  var currentPhrases = VOICE_PHRASES.map(function (p) {
+    return { id: p.id, label: p.label, instruction: p.prompt, text: null };
+  });
 
   bpmEl.addEventListener('input', function () { bpmValueEl.textContent = bpmEl.value; });
   barsEl.addEventListener('input', function () { barsValueEl.textContent = barsEl.value; });
@@ -246,6 +274,7 @@
       var body = await res.json();
       playAudioBase64(body.audio.base64Wav, { title: entry.title, seed: entry.seed, composition: body.composition });
       statusEl.textContent = 'Done.';
+      fetchAndApplyLyrics(entry.payload.prompt, entry.seed);
     } catch (err) {
       statusEl.textContent = 'Error: ' + err.message;
     }
@@ -310,15 +339,21 @@
     renderHistory();
   });
 
-  async function runGeneration(seedOverride) {
+  function buildFullPrompt() {
     var prompt = document.getElementById('prompt').value.trim();
     var style = document.getElementById('style').value;
     var bpm = bpmEl.value;
     var bars = barsEl.value;
     var instrumental = instrumentalEl.checked;
-    var fullPrompt = (prompt || ('a track in the ' + style + ' style')) +
+    return (prompt || ('a track in the ' + style + ' style')) +
       ', ' + style + ' style, ' + bpm + ' bpm, ' + bars + ' bars' +
       (instrumental ? ', instrumental' : '');
+  }
+
+  async function runGeneration(seedOverride) {
+    var style = document.getElementById('style').value;
+    var instrumental = instrumentalEl.checked;
+    var fullPrompt = buildFullPrompt();
 
     statusEl.textContent = seedOverride != null ? 'Regenerating...' : 'Generating...';
     systemStatusEl.textContent = 'Synthesizing...';
@@ -361,6 +396,10 @@
       renderHistory();
 
       statusEl.textContent = 'Done.';
+      // Same prompt + same seed as the audio that was just rendered, so
+      // these are the exact lyrics (and therefore recording phrases) tied
+      // to this specific track, not a fresh unrelated draw.
+      fetchAndApplyLyrics(fullPrompt, body.seed);
     } catch (err) {
       statusEl.textContent = 'Error: ' + err.message;
     } finally {
@@ -371,6 +410,61 @@
   document.getElementById('generate').addEventListener('click', function () { runGeneration(null); });
   regenerateEl.addEventListener('click', function () {
     if (lastSeed != null) runGeneration(lastSeed);
+  });
+
+  // --- Lyrics (real template + rhyme-family generation, no audio) ---
+  function renderLyrics(lyrics) {
+    var sectionsEl = document.getElementById('lyricsSections');
+    sectionsEl.innerHTML = '';
+    lyrics.sections.forEach(function (section) {
+      var div = document.createElement('div');
+      div.style.marginBottom = '0.75rem';
+      var heading = document.createElement('strong');
+      heading.textContent = section.type === 'verse' ? 'Verse' : 'Chorus';
+      div.appendChild(heading);
+      var linesEl = document.createElement('div');
+      linesEl.style.fontSize = '0.9rem';
+      linesEl.style.marginTop = '0.25rem';
+      linesEl.style.whiteSpace = 'pre-line';
+      linesEl.textContent = section.lines.join('\n');
+      div.appendChild(linesEl);
+      sectionsEl.appendChild(div);
+    });
+    document.getElementById('lyricsOutput').hidden = false;
+  }
+
+  function applyRecordingPhrases(recordingPhrases) {
+    currentPhrases = recordingPhrases.map(function (p) {
+      return { id: p.id, label: p.label, instruction: 'Sing or say this line naturally, in your comfortable range:', text: p.text };
+    });
+    recordings = {}; // the previous recordings were for different phrases/words
+    refreshVoiceToggle();
+    renderPhrases();
+  }
+
+  async function fetchAndApplyLyrics(promptText, seed) {
+    var lyricsStatusEl = document.getElementById('lyricsStatus');
+    lyricsStatusEl.textContent = 'Generating lyrics...';
+    try {
+      var payload = { prompt: promptText };
+      if (seed != null) payload.seed = seed;
+      var res = await fetch(apiBaseUrl + '/api/lyrics', { method: 'POST', body: JSON.stringify(payload) });
+      if (!res.ok) {
+        var errBody = await res.json().catch(function () { return {}; });
+        throw new Error(errBody.error || ('lyrics generation failed: ' + res.status));
+      }
+      var body = await res.json();
+      renderLyrics(body.lyrics);
+      applyRecordingPhrases(body.recordingPhrases);
+      lyricsStatusEl.textContent = 'Done.';
+      return body;
+    } catch (err) {
+      lyricsStatusEl.textContent = 'Error: ' + err.message;
+    }
+  }
+
+  document.getElementById('generateLyrics').addEventListener('click', function () {
+    fetchAndApplyLyrics(buildFullPrompt(), null);
   });
 
   // --- Voice profile recording ---
@@ -420,12 +514,16 @@
   function renderPhrases() {
     var container = document.getElementById('phrases');
     container.innerHTML = '';
-    VOICE_PHRASES.forEach(function (phrase) {
+    currentPhrases.forEach(function (phrase) {
       var div = document.createElement('div');
       div.className = 'phrase';
       var badge = recordings[phrase.id] ? '<span class="badge">recorded</span>' : '<span class="badge pending">not recorded</span>';
-      div.innerHTML = '<strong>' + phrase.label + '</strong> ' + badge +
-        '<div class="prompt">' + phrase.prompt + '</div>';
+      var html = '<strong>' + phrase.label + '</strong> ' + badge +
+        '<div class="prompt">' + phrase.instruction + '</div>';
+      if (phrase.text) {
+        html += '<div class="prompt" style="font-style:italic;color:#e8e8ec;">\u201c' + phrase.text + '\u201d</div>';
+      }
+      div.innerHTML = html;
       var btn = document.createElement('button');
       btn.className = 'secondary';
       btn.textContent = 'Record';

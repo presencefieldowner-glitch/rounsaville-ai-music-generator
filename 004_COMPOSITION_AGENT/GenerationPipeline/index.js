@@ -17,6 +17,7 @@ const { renderComposition, interleaveStereo, encodeWav, decodeWav } = require('.
 const { normalizeStereo, applyLimiterStereo, applyReverbStereo } = require('../../003_AUDIO_ENGINE/MixMaster');
 const { analyzeVoiceSample, buildVoiceProfile } = require('../../003_AUDIO_ENGINE/VoiceProfiler');
 const { pitchShift, timeStretch } = require('../../003_AUDIO_ENGINE/PhaseVocoder');
+const { generateLyrics, deriveRecordingPhrases } = require('../../002_LLM_GATEWAY/LyricsEngine');
 
 const MAX_SEED = 2 ** 31 - 1;
 const MAX_VOICE_SAMPLES = 10;
@@ -38,6 +39,23 @@ function defaultModelRouter() {
   return router;
 }
 
+// Lightweight, audio-free: parses the prompt and generates lyrics text
+// only, for a fast "see the words before you commit to generating the
+// full track" preview and for deriving the voice-recording phrases from
+// them. Note this is real, if simple, template + rhyme-family generation
+// (see 002_LLM_GATEWAY/LyricsEngine) — not an LLM — and the words it
+// produces are never sung by the audio pipeline (there's no text-to-
+// singing-voice synthesis here); see runGeneration's comment for why.
+function generateLyricsForPrompt(body) {
+  const cleanPrompt = sanitizePrompt(body.prompt ?? '');
+  const parsedSpec = parsePrompt(cleanPrompt);
+  const spec = validateSpec(parsedSpec);
+  const seed = Number.isFinite(body.seed) ? Math.floor(body.seed) & MAX_SEED : Math.floor(Math.random() * MAX_SEED);
+  const lyrics = generateLyrics(spec, { seed });
+  const recordingPhrases = deriveRecordingPhrases(lyrics);
+  return { cleanPrompt, spec, seed, lyrics, recordingPhrases };
+}
+
 // Every generation has a seed — either the caller's (for "regenerate the
 // same track") or a freshly random one — and it's always returned so the
 // caller can capture it for later.
@@ -54,6 +72,8 @@ async function runGeneration(body, modelRouter) {
     voiceProfile: body.voiceProfile,
     seed,
   });
+
+  const lyrics = generateLyrics(spec, { seed });
 
   const { modelUsed, result: composition } = await modelRouter.route(spec);
   const { left, right, sampleRate } = renderComposition(composition);
@@ -80,7 +100,7 @@ async function runGeneration(body, modelRouter) {
   const mastered = applyLimiterStereo(normalized.left, normalized.right);
   const wav = encodeWav(interleaveStereo(mastered.left, mastered.right), sampleRate, 2);
 
-  return { cleanPrompt, spec, modelUsed, composition, sampleRate, wav, seed };
+  return { cleanPrompt, spec, modelUsed, composition, sampleRate, wav, seed, lyrics };
 }
 
 // Validates, decodes, and analyzes recorded voice samples (base64 WAV),
@@ -110,6 +130,7 @@ function analyzeVoiceSamples(base64Samples) {
 module.exports = {
   defaultModelRouter,
   runGeneration,
+  generateLyricsForPrompt,
   analyzeVoiceSamples,
   MAX_SEED,
   MAX_VOICE_SAMPLES,

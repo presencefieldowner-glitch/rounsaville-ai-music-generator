@@ -337,3 +337,64 @@ test('POST /api/generate: tempoStretch produces a real phase-vocoder-stretched W
     assert.ok(stretched.length > baseline.length * 1.5, 'expected a meaningfully longer WAV from a 2x tempo stretch');
   });
 });
+
+test('POST /api/generate JSON response includes real generated lyrics', async () => {
+  await withServer(async ({ baseUrl }) => {
+    const res = await fetch(`${baseUrl}/api/generate`, {
+      method: 'POST',
+      body: JSON.stringify({ prompt: 'a happy pop song in C major at 110 bpm, 4 bars', seed: 3 }),
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.ok(body.lyrics);
+    assert.ok(body.lyrics.lines.length > 0);
+  });
+});
+
+test('POST /api/lyrics returns lyrics and derived recording phrases without rendering audio', async () => {
+  await withServer(async ({ baseUrl }) => {
+    const res = await fetch(`${baseUrl}/api/lyrics`, {
+      method: 'POST',
+      body: JSON.stringify({ prompt: 'a sad ballad in A minor at 70 bpm', seed: 21 }),
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.seed, 21);
+    assert.ok(body.lyrics.lines.length > 0);
+    assert.equal(body.recordingPhrases.length, 3);
+    for (const phrase of body.recordingPhrases) {
+      assert.ok(phrase.label);
+      assert.ok(body.lyrics.lines.includes(phrase.text));
+    }
+  });
+});
+
+test('POST /api/lyrics is deterministic for the same seed and prompt', async () => {
+  await withServer(async ({ baseUrl }) => {
+    const request = () =>
+      fetch(`${baseUrl}/api/lyrics`, {
+        method: 'POST',
+        body: JSON.stringify({ prompt: 'an energetic rock anthem', seed: 77 }),
+      }).then((r) => r.json());
+
+    const a = await request();
+    const b = await request();
+    assert.deepEqual(a.lyrics, b.lyrics);
+  });
+});
+
+test('POST /api/lyrics is rate-limited as a compute-heavy route', async () => {
+  await withServer(
+    async ({ baseUrl }) => {
+      const makeRequest = () =>
+        fetch(`${baseUrl}/api/lyrics`, { method: 'POST', body: JSON.stringify({ prompt: 'a calm track' }) });
+
+      const first = await makeRequest();
+      assert.equal(first.status, 200);
+
+      const second = await makeRequest();
+      assert.equal(second.status, 429);
+    },
+    { rateLimiter: createRateLimiter({ capacity: 1, refillPerSecond: 0.001 }) }
+  );
+});

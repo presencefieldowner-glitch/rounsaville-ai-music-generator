@@ -333,6 +333,7 @@ main() {
     "002_LLM_GATEWAY/PromptEngine"
     "002_LLM_GATEWAY/ModelRouter"
     "002_LLM_GATEWAY/Guardrails"
+    "002_LLM_GATEWAY/LyricsEngine"
   )
   for module in "${LLMLayer[@]}"; do run_module "$module" || true; done
 

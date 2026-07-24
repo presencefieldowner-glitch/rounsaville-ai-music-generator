@@ -7,6 +7,7 @@ const { createCompositionMemory } = require('../../004_COMPOSITION_AGENT/Composi
 const {
   defaultModelRouter,
   runGeneration,
+  generateLyricsForPrompt,
   analyzeVoiceSamples,
   MAX_VOICE_SAMPLES,
   MAX_VOICE_SAMPLE_BASE64_LENGTH,
@@ -58,6 +59,7 @@ function sendGenerationResult(res, body, result) {
     modelUsed: result.modelUsed,
     composition: result.composition,
     seed: result.seed,
+    lyrics: result.lyrics,
     audio: { sampleRate: result.sampleRate, base64Wav: result.wav.toString('base64') },
   });
 }
@@ -104,6 +106,19 @@ function createApp({
     sendGenerationResult(res, body, result);
   }
 
+  // Fast, audio-free lyrics preview: parses the prompt and generates
+  // lyrics text plus the derived voice-recording phrases, without
+  // rendering any audio. Real template + rhyme-family generation (see
+  // 002_LLM_GATEWAY/LyricsEngine), not an LLM — and the words it returns
+  // are never sung by the audio pipeline; there's no text-to-singing-
+  // voice synthesis here, and recording the derived phrases only
+  // calibrates pitch range, not voice timbre.
+  async function handleLyrics(req, res) {
+    const body = await readJsonBody(req);
+    const result = generateLyricsForPrompt(body);
+    sendJson(res, 200, { seed: result.seed, lyrics: result.lyrics, recordingPhrases: result.recordingPhrases });
+  }
+
   // Analyzes one or more recorded voice samples (base64-encoded WAV) and
   // returns a pitch-range profile. This calibrates the synth's vocal range
   // to the speaker's real pitch — it is not neural voice cloning.
@@ -130,7 +145,10 @@ function createApp({
     const isRateLimitedRoute =
       req.method === 'POST' &&
       parts[0] === 'api' &&
-      (parts[1] === 'generate' || parts[1] === 'voice-profile' || (parts[1] === 'sessions' && parts[3] === 'generate'));
+      (parts[1] === 'generate' ||
+        parts[1] === 'voice-profile' ||
+        parts[1] === 'lyrics' ||
+        (parts[1] === 'sessions' && parts[3] === 'generate'));
 
     if (isRateLimitedRoute) {
       const clientKey = req.socket?.remoteAddress ?? 'unknown';
@@ -150,6 +168,9 @@ function createApp({
       }
       if (req.method === 'POST' && parts[0] === 'api' && parts[1] === 'voice-profile' && parts.length === 2) {
         return await handleVoiceProfile(req, res);
+      }
+      if (req.method === 'POST' && parts[0] === 'api' && parts[1] === 'lyrics' && parts.length === 2) {
+        return await handleLyrics(req, res);
       }
       if (req.method === 'POST' && parts[0] === 'api' && parts[1] === 'sessions' && parts.length === 2) {
         return await handleCreateSession(req, res);

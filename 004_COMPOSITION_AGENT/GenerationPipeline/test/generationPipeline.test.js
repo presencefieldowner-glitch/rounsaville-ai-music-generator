@@ -2,7 +2,13 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { defaultModelRouter, runGeneration, analyzeVoiceSamples, MAX_VOICE_SAMPLES } = require('../index.js');
+const {
+  defaultModelRouter,
+  runGeneration,
+  generateLyricsForPrompt,
+  analyzeVoiceSamples,
+  MAX_VOICE_SAMPLES,
+} = require('../index.js');
 const { encodeWav, decodeWav } = require('../../../003_AUDIO_ENGINE/AudioRenderer');
 
 function sineWavBase64(frequency, seconds, sampleRate) {
@@ -12,12 +18,35 @@ function sineWavBase64(frequency, seconds, sampleRate) {
   return encodeWav(samples, sampleRate, 1).toString('base64');
 }
 
+test('generateLyricsForPrompt is fast/audio-free and derives real recording phrases', () => {
+  const result = generateLyricsForPrompt({ prompt: 'a happy pop song', seed: 1 });
+  assert.ok(result.lyrics.lines.length > 0);
+  assert.equal(result.recordingPhrases.length, 3);
+  for (const phrase of result.recordingPhrases) {
+    assert.ok(result.lyrics.lines.includes(phrase.text));
+  }
+});
+
+test('generateLyricsForPrompt is deterministic given the same seed', () => {
+  const a = generateLyricsForPrompt({ prompt: 'a sad ballad', seed: 99 });
+  const b = generateLyricsForPrompt({ prompt: 'a sad ballad', seed: 99 });
+  assert.deepEqual(a.lyrics, b.lyrics);
+});
+
+test('runGeneration includes lyrics generated with the same seed as the audio', async () => {
+  const router = defaultModelRouter();
+  const a = await runGeneration({ prompt: 'a dark cinematic piece', seed: 55 }, router);
+  const b = generateLyricsForPrompt({ prompt: 'a dark cinematic piece', seed: 55 });
+  assert.deepEqual(a.lyrics, b.lyrics);
+});
+
 test('runGeneration produces a real stereo WAV and always reports a seed', async () => {
   const result = await runGeneration({ prompt: 'a lofi track in C major at 80 bpm, 4 bars' }, defaultModelRouter());
   assert.ok(Number.isFinite(result.seed));
   assert.equal(result.wav.toString('ascii', 0, 4), 'RIFF');
   assert.equal(result.wav.readUInt16LE(22), 2); // stereo
   assert.ok(result.composition.tracks.length > 0);
+  assert.ok(result.lyrics.lines.length > 0);
 });
 
 test('runGeneration with the same seed reproduces the exact same composition', async () => {

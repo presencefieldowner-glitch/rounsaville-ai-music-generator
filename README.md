@@ -25,7 +25,17 @@ packages, so `npm install` never touches the network:
 - **LLM Gateway**: `PromptEngine` parses free text into a structured
   generation spec (genre/mood/tempo/key/bars); `Guardrails` sanitizes
   prompts and clamps the spec into safe ranges; `ModelRouter` dispatches to
-  registered generator backends with priority + fallback.
+  registered generator backends with priority + fallback. `LyricsEngine` is
+  a real, deterministic, seeded template + rhyme-family lyric generator —
+  **not an LLM** (there's no network access to one here): mad-libs-style
+  line templates filled from mood-tagged word banks, closed by true rhymes
+  (hand-grouped by actual sound, e.g. `night`/`light`/`flight`, not
+  spelling) in an ABCB stanza scheme. It shares the same seed as the audio
+  composition, so regenerating with a given seed reproduces identical
+  lyrics too. **This does not produce sung vocals**: nothing in this
+  codebase does text-to-singing-voice synthesis — `TrackGenerator`'s
+  "vocal" track is a wordless, pitch-matched melody line, not these words
+  being sung.
 - **Audio Engine**: `SynthEngine` has four phase-based oscillators
   (sine/square/saw/triangle) with a real ADSR envelope, plus two
   genuinely different synthesis techniques for richer timbre: `pad`
@@ -76,7 +86,11 @@ packages, so `npm install` never touches the network:
   the Netlify functions call — extracted specifically so the two
   interfaces can't drift out of sync the way they briefly did (the
   Netlify functions kept rendering mono with no reverb/seed support
-  after `REST_API` grew those features locally).
+  after `REST_API` grew those features locally). It also exposes
+  `generateLyricsForPrompt`, a fast, audio-free path (parse prompt -> spec
+  -> `LyricsEngine`) used by the standalone `POST /api/lyrics` endpoint and
+  reused inside `runGeneration` so a track's audio and its lyrics are
+  always generated from the same seed.
 - **Interface**: `WebSockets` is a hand-rolled RFC 6455 server (handshake,
   framing, masking) with no `ws` dependency. `JitterBuffer` is a real
   jitter buffer + packet-loss concealment — the actual technique
@@ -104,7 +118,24 @@ packages, so `npm install` never touches the network:
   persistent process, not the stateless Netlify functions), and
   `/api/voice-profile` caps sample count/size separately from the
   smaller default body limit, since a voice recording is legitimately
-  much bigger than a prompt.
+  much bigger than a prompt. `POST /api/lyrics` is the audio-free lyrics
+  preview described above — same rate-limited/compute-heavy treatment as
+  `/api/generate`, and `/api/generate`'s JSON response now also carries a
+  `lyrics` field generated with that same request's seed.
+
+  `WebUI` has a **Lyrics** section: a "Generate Lyrics" button that calls
+  `/api/lyrics` and renders the verse/chorus text, plus an always-visible,
+  in-product disclaimer (not just documentation) that this is real
+  template + rhyme generation, not an LLM, and that the words are never
+  sung by the generated audio since there's no text-to-singing-voice
+  synthesis anywhere in this system. Generating a full track also
+  refreshes the lyrics (via the same seed, so they match exactly). The
+  Voice Profile section's recording phrases are then derived from those
+  actual generated lyric lines (`deriveRecordingPhrases`) instead of the
+  generic "hum a low note" fallback — so recording calibrates pitch range
+  against the real words the user would say — with its own disclaimer
+  reiterating that this still doesn't make the output audio pronounce
+  those words or clone voice timbre.
 
   `WebUI` is a single-page studio (style/BPM/bars/instrumental controls,
   seed display + "regenerate with same seed", a download-as-file link,

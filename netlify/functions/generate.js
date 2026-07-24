@@ -43,6 +43,7 @@ exports.handler = async (event) => {
         modelUsed: result.modelUsed,
         composition: result.composition,
         seed: result.seed,
+        lyrics: result.lyrics,
         audio: { sampleRate: result.sampleRate, base64Wav: result.wav.toString('base64') },
       }),
     };

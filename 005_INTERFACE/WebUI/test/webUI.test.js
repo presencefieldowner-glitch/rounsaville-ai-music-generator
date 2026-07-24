@@ -61,6 +61,24 @@ test('getIndexHtml produces well-formed, parseable script content (balanced brac
   new Function(scriptMatch[1]);
 });
 
+test('getIndexHtml includes the lyrics section wired to /api/lyrics with an honest disclaimer', () => {
+  const html = getIndexHtml();
+  assert.match(html, /id="generateLyrics"/);
+  assert.match(html, /id="lyricsSections"/);
+  assert.match(html, /\/api\/lyrics/);
+  assert.match(html, /not[\s\S]{0,20}an LLM/i);
+  assert.match(html, /never sung/i);
+  assert.match(html, /no text-to-singing-voice synthesis/i);
+});
+
+test('getIndexHtml derives the voice-recording phrases from generated lyrics rather than only the static fallback', () => {
+  const html = getIndexHtml();
+  assert.match(html, /applyRecordingPhrases/);
+  assert.match(html, /currentPhrases/);
+  // The fallback phrases still exist for before any lyrics are generated.
+  assert.equal(VOICE_PHRASES.length, 3);
+});
+
 test('startWebUI serves the page at / and 404s elsewhere', async () => {
   const server = await startWebUI(0);
   const port = server.address().port;
@@ -91,6 +109,29 @@ test('apiProxyTarget forwards /api/* requests to a real backend (fixes plain loc
     assert.equal(res.status, 200);
     const body = await res.json();
     assert.equal(body.status, 'ok');
+  } finally {
+    await new Promise((resolve) => uiServer.close(resolve));
+    await new Promise((resolve) => apiServer.close(resolve));
+  }
+});
+
+test('apiProxyTarget also forwards /api/lyrics, returning real lyrics + recording phrases', async () => {
+  const { startServer } = require('../../REST_API');
+  const { server: apiServer } = await startServer(0);
+  const apiPort = apiServer.address().port;
+
+  const uiServer = await startWebUI(0, { apiProxyTarget: `http://127.0.0.1:${apiPort}` });
+  const uiPort = uiServer.address().port;
+
+  try {
+    const res = await fetch(`http://127.0.0.1:${uiPort}/api/lyrics`, {
+      method: 'POST',
+      body: JSON.stringify({ prompt: 'a happy pop song', seed: 4 }),
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.ok(body.lyrics.lines.length > 0);
+    assert.equal(body.recordingPhrases.length, 3);
   } finally {
     await new Promise((resolve) => uiServer.close(resolve));
     await new Promise((resolve) => apiServer.close(resolve));
