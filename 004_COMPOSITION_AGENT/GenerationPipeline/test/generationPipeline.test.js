@@ -157,6 +157,51 @@ test('runGeneration lets an explicit noDrums/noBass body flag override the promp
   assert.equal(result.composition.tracks.find((t) => t.name === 'bass'), undefined);
 });
 
+test('a rap prompt gets the trap genre treatment: machine-tight melody quantization', async () => {
+  const result = await runGeneration({ prompt: 'a hard rap beat at 90 bpm, 4 bars', seed: 60 }, defaultModelRouter());
+  assert.equal(result.spec.genre, 'trap');
+  const melody = result.composition.tracks.find((t) => t.name === 'melody');
+  for (const note of melody.notes) {
+    assert.equal(note.start, Math.round(note.start), 'rap/trap melody notes must sit exactly on the grid');
+  }
+});
+
+test('a country prompt gets the country treatment: wider stereo field than a trap render', async () => {
+  const router = defaultModelRouter();
+  const country = await runGeneration({ prompt: 'a country ballad at 90 bpm, 4 bars', seed: 61 }, router);
+  const trap = await runGeneration({ prompt: 'a trap beat at 90 bpm, 4 bars', seed: 61 }, router);
+  assert.equal(country.spec.genre, 'country');
+  const melodyPan = (r) => Math.abs(r.composition.tracks.find((t) => t.name === 'melody').pan);
+  assert.ok(melodyPan(country) > melodyPan(trap));
+});
+
+test('the genre mastering profile is genuinely applied: a trap render differs from the same composition mastered neutrally', async () => {
+  const { sanitizePrompt, validateSpec } = require('../../../002_LLM_GATEWAY/Guardrails');
+  const { parsePrompt } = require('../../../002_LLM_GATEWAY/PromptEngine');
+  const { generateComposition } = require('../../TrackGenerator');
+  const { renderComposition, interleaveStereo, encodeWav } = require('../../../003_AUDIO_ENGINE/AudioRenderer');
+  const { normalizeStereo, applyLimiterStereo, applyReverbStereo } = require('../../../003_AUDIO_ENGINE/MixMaster');
+
+  const prompt = 'a trap beat at 90 bpm, 4 bars';
+  const seed = 62;
+  const result = await runGeneration({ prompt, seed }, defaultModelRouter());
+
+  // Rebuild the exact same composition through the pipeline's own stages,
+  // but with the OLD neutral mastering (no genre EQ, historical 0.9
+  // limiter threshold). If the mastering profile is really wired in, the
+  // real pipeline's WAV must differ from this reconstruction.
+  const spec = validateSpec({ ...parsePrompt(sanitizePrompt(prompt)), seed });
+  const composition = generateComposition(spec, { seed });
+  assert.deepEqual(composition, result.composition); // same composition either way — only mastering differs
+  const { left, right, sampleRate } = renderComposition(composition);
+  const reverberated = applyReverbStereo(left, right, sampleRate, composition.reverb);
+  const normalized = normalizeStereo(reverberated.left, reverberated.right);
+  const neutral = applyLimiterStereo(normalized.left, normalized.right); // default 0.9 threshold, no EQ
+  const neutralWav = encodeWav(interleaveStereo(neutral.left, neutral.right), sampleRate, 2);
+
+  assert.ok(!result.wav.equals(neutralWav), 'expected the trap mastering profile to change the rendered WAV');
+});
+
 test('runGeneration renders a real 3/4 waltz when the prompt says so, reflected in the composition and a shorter render than the same bars in 4/4', async () => {
   const router = defaultModelRouter();
   const waltz = await runGeneration({ prompt: 'a classical waltz at 120 bpm, 8 bars', seed: 43 }, router);

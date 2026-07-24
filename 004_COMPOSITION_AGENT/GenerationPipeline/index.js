@@ -12,7 +12,7 @@ const { clamp } = require('../../001_FOUNDATION/Utilities');
 const { sanitizePrompt, validateSpec } = require('../../002_LLM_GATEWAY/Guardrails');
 const { parsePrompt } = require('../../002_LLM_GATEWAY/PromptEngine');
 const { createModelRouter } = require('../../002_LLM_GATEWAY/ModelRouter');
-const { generateComposition } = require('../TrackGenerator');
+const { generateComposition, masteringFor } = require('../TrackGenerator');
 const { renderComposition, interleaveStereo, encodeWav, decodeWav } = require('../../003_AUDIO_ENGINE/AudioRenderer');
 const { normalizeStereo, applyLimiterStereo, applyReverbStereo, applyEqStereo } = require('../../003_AUDIO_ENGINE/MixMaster');
 const { analyzeVoiceSample, buildVoiceProfile } = require('../../003_AUDIO_ENGINE/VoiceProfiler');
@@ -85,12 +85,22 @@ async function runGeneration(body, modelRouter) {
   const { left, right, sampleRate } = renderComposition(composition);
   const reverberated = applyReverbStereo(left, right, sampleRate, composition.reverb);
 
+  // Genre mastering profile (see TrackGenerator.masteringFor): a real
+  // per-genre tone-shaping EQ applied to the mixed/reverberated signal —
+  // trap/edm push the low shelf and limit hard, country/classical get a
+  // touch of treble air and a limiter that barely engages, preserving
+  // dynamic range. The profile's limiterThreshold is used at the final
+  // limiting stage below; unknown genres get the exact historical
+  // behavior (no EQ, 0.9 threshold).
+  const mastering = masteringFor(spec.genre);
+  const genreShaped = applyEqStereo(reverberated.left, reverberated.right, sampleRate, mastering.eq);
+
   // Optional post-processing via the phase vocoder: pitch-bend and/or
   // tempo-stretch the already-rendered mix. Applied per-channel, then
   // re-normalized/re-limited afterward since resampling can shift peak
   // levels slightly.
-  let processedLeft = reverberated.left;
-  let processedRight = reverberated.right;
+  let processedLeft = genreShaped.left;
+  let processedRight = genreShaped.right;
   if (Number.isFinite(body.pitchSemitones) && body.pitchSemitones !== 0) {
     const semitones = clamp(body.pitchSemitones, -MAX_PITCH_SEMITONES, MAX_PITCH_SEMITONES);
     processedLeft = pitchShift(processedLeft, sampleRate, semitones);
@@ -119,7 +129,7 @@ async function runGeneration(body, modelRouter) {
   }
 
   const normalized = normalizeStereo(processedLeft, processedRight);
-  const mastered = applyLimiterStereo(normalized.left, normalized.right);
+  const mastered = applyLimiterStereo(normalized.left, normalized.right, mastering.limiterThreshold);
   const wav = encodeWav(interleaveStereo(mastered.left, mastered.right), sampleRate, 2);
 
   return { cleanPrompt, spec, modelUsed, composition, sampleRate, wav, seed, lyrics };

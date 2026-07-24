@@ -120,15 +120,42 @@ packages, so `npm install` never touches the network:
   pruning), `CompositionMemory` (per-session event history),
   `TrackGenerator` — a deterministic, seeded algorithmic composer, not a
   trained model. It builds a genre-specific chord progression (e.g. jazz
-  gets ii-V-I, EDM gets vi-IV-I-V) and locks the bassline to each bar's
-  chord root; the melody leans onto a chord tone on the strong beat of
-  each bar (real harmonic awareness, not an independent random walk) and
-  picks its timbre by genre (`pluck` for lofi/jazz/classical, `pad` for
+  gets ii-V-I, EDM gets vi-IV-I-V, country gets the classic three-chord
+  I-IV-I-V) and locks the bassline to each bar's chord root; the melody
+  leans onto a chord tone on the strong beat of each bar (real harmonic
+  awareness, not an independent random walk) and picks its timbre by
+  genre (`pluck` for lofi/jazz/classical/country, `pad` for
   ambient/cinematic, `saw` for edm/trap, `square` for rock); a
   `dynamicsCurve` fades the arrangement in over the first ~15% of bars
   and out over the last ~15% instead of constant volume throughout. An
   optional vocal line is added, shaped to a voice profile, when
-  `instrumental: false`. `GenerationPipeline` is the shared orchestration
+  `instrumental: false`.
+
+  Each genre bucket is a real, distinct *treatment*, not just a label —
+  three per-genre dimensions beyond progression/timbre/reverb:
+  `humanizeAmountFor` sets the timing feel (rap/trap and edm are
+  machine-tight — every melody note lands exactly on the grid, the
+  honest, implementable version of "strict transient alignment" — while
+  jazz gets the loosest off-grid nudge and country/classical sit in
+  between); `stereoWidthFor` scales the stereo field (acoustic ensemble
+  genres like country/classical spread the players wide the way live
+  room micing would, trap/edm keep energy near the center so the low
+  end stays mono-solid); and `masteringFor` supplies a per-genre
+  mastering profile — a tone-shaping curve for MixMaster's real biquad
+  EQ plus a limiter threshold, where trap/edm push the low shelf and
+  limit hard (tight, loud) and country/classical get a touch of treble
+  air with a limiter that barely engages, genuinely preserving dynamic
+  range. (Note the EQ's bass shelf sits at 200Hz — this synth engine
+  doesn't produce meaningful 20–60Hz sub-bass content, so no sub-bass
+  claims.) Verified end-to-end: a trap render is byte-different from
+  the same composition mastered neutrally, its melody is fully
+  grid-quantized, and a country melody measurably sits wider in the
+  stereo field than a trap one. To be explicit about what this is
+  *not*: there is no autoregressive transformer, no audio diffusion
+  model, and no CLAP text-audio encoder anywhere in this repo — those
+  are large trained ML systems this environment can't run; the
+  keyword-driven `PromptEngine` -> spec -> deterministic composer
+  pipeline is the honest stand-in for that text-to-intent mapping. `GenerationPipeline` is the shared orchestration
   glue (prompt -> spec -> composition -> render -> reverb -> master ->
   WAV, plus voice-sample validation/analysis) that both `REST_API` and
   the Netlify functions call — extracted specifically so the two

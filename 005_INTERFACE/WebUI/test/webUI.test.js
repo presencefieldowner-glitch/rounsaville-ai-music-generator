@@ -17,6 +17,14 @@ test('getIndexHtml renders every genre as a style option', () => {
   }
 });
 
+test('rap and country are selectable styles, and the style picker explains the real genre treatment', () => {
+  assert.ok(GENRES.includes('rap'));
+  assert.ok(GENRES.includes('country'));
+  const html = getIndexHtml();
+  assert.match(html, /mastering profile/i);
+  assert.match(html, /grid-tight/i);
+});
+
 test('getIndexHtml includes the voice-cloning disclaimer and calls /api/generate + /api/voice-profile', () => {
   const html = getIndexHtml();
   assert.match(html, /not[\s\S]{0,60}neural voice cloning/i);

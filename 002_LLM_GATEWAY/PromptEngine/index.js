@@ -8,10 +8,12 @@ const { createGenerationSpec } = require('../../001_FOUNDATION/Types');
 // API keys. ModelRouter is the seam where a real LLM/embeddings backend
 // would be plugged in later without touching downstream modules.
 
-// Direct genre names plus common aliases that map onto the same 8 genre
+// Direct genre names plus common aliases that map onto the same 9 genre
 // buckets TrackGenerator actually specializes for (chord progression,
-// timbre, reverb space) — so "synthwave"/"house" get the real edm
-// treatment rather than silently falling through to a generic default.
+// timbre, reverb space, mastering profile, timing feel, stereo width) —
+// so "synthwave"/"house" get the real edm treatment and "rap"/"hip hop"
+// the real trap treatment rather than silently falling through to a
+// generic default.
 const GENRE_KEYWORDS = {
   lofi: 'lofi',
   'lo-fi': 'lofi',
@@ -40,6 +42,10 @@ const GENRE_KEYWORDS = {
   'hip hop': 'trap',
   'hip-hop': 'trap',
   hiphop: 'trap',
+  rap: 'trap',
+  country: 'country',
+  bluegrass: 'country',
+  americana: 'country',
 };
 
 const MOOD_KEYWORDS = {
@@ -125,10 +131,20 @@ function detectTimeSignature(text) {
   return undefined;
 }
 
+function escapeRegExp(str) {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+// Whole-word matching, not bare substring inclusion. The earlier
+// `.includes()` version would have matched keywords buried inside other
+// words — a real hazard once short keywords like "rap" exist ("wrapped",
+// "grape" would all have hit the trap bucket), and it already misfired
+// in principle on things like "housewife" -> house -> edm. Multi-word
+// keywords ("hip hop", "film score") still work since \b anchors only
+// the ends of the whole phrase.
 function findKeyword(text, dictionary) {
-  const lower = text.toLowerCase();
   for (const [keyword, value] of Object.entries(dictionary)) {
-    if (lower.includes(keyword)) return value;
+    if (new RegExp(`\\b${escapeRegExp(keyword)}\\b`, 'i').test(text)) return value;
   }
   return undefined;
 }

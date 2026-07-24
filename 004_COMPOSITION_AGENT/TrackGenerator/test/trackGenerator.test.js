@@ -9,6 +9,9 @@ const {
   chordProgressionFor,
   melodyWaveformFor,
   reverbFor,
+  humanizeAmountFor,
+  stereoWidthFor,
+  masteringFor,
   buildChord,
   generateChordProgression,
   dynamicsCurve,
@@ -283,6 +286,74 @@ test('noDrums/noBass omit those tracks entirely; both default to included when u
 test('generateComposition carries the time signature onto the rendered composition, defaulting to 4/4', () => {
   assert.deepEqual(generateComposition({ ...spec }, { seed: 1 }).timeSignature, [4, 4]);
   assert.deepEqual(generateComposition({ ...spec, timeSignature: [3, 4] }, { seed: 1 }).timeSignature, [3, 4]);
+});
+
+test('country is a real genre bucket: I-IV-I-V progression, picked-string timbre, modest room reverb', () => {
+  assert.deepEqual(chordProgressionFor('country'), [0, 3, 0, 4]);
+  assert.equal(melodyWaveformFor('country'), 'pluck');
+  const reverb = reverbFor('country');
+  assert.ok(reverb.roomSize < reverbFor('cinematic').roomSize, 'country should be a room, not a hall');
+  const composition = generateComposition({ ...spec, genre: 'country' }, { seed: 4 });
+  assert.ok(isValidComposition(composition));
+});
+
+test('humanizeAmountFor: rap/trap and edm are machine-tight (0), jazz is loosest, unknown genres keep the old default', () => {
+  assert.equal(humanizeAmountFor('trap'), 0);
+  assert.equal(humanizeAmountFor('edm'), 0);
+  assert.ok(humanizeAmountFor('jazz') > humanizeAmountFor('lofi'));
+  assert.equal(humanizeAmountFor('some-unknown-genre'), 0.02); // the pre-existing default bound
+});
+
+test('a trap melody is genuinely quantized to the grid: every note start is an exact integer step', () => {
+  const composition = generateComposition({ ...spec, genre: 'trap', bars: 8 }, { seed: 21 });
+  const melody = composition.tracks.find((t) => t.name === 'melody');
+  assert.ok(melody.notes.length > 0);
+  for (const note of melody.notes) {
+    assert.equal(note.start, Math.round(note.start), `trap melody note at ${note.start} should sit exactly on the grid`);
+  }
+});
+
+test('a jazz melody is NOT fully quantized: at least one note sits off the grid', () => {
+  const composition = generateComposition({ ...spec, genre: 'jazz', bars: 8 }, { seed: 21 });
+  const melody = composition.tracks.find((t) => t.name === 'melody');
+  assert.ok(
+    melody.notes.some((n) => Math.abs(n.start - Math.round(n.start)) > 1e-9),
+    'expected jazz timing to be humanized off-grid'
+  );
+});
+
+test('stereoWidthFor spreads acoustic genres wider than club genres, and the width really changes track pans', () => {
+  assert.ok(stereoWidthFor('country') > stereoWidthFor('trap'));
+  assert.ok(stereoWidthFor('classical') > 1);
+  assert.ok(stereoWidthFor('trap') < 1);
+  assert.equal(stereoWidthFor('some-unknown-genre'), 1);
+
+  const country = generateComposition({ ...spec, genre: 'country' }, { seed: 5 });
+  const trap = generateComposition({ ...spec, genre: 'trap' }, { seed: 5 });
+  const melodyPan = (c) => Math.abs(c.tracks.find((t) => t.name === 'melody').pan);
+  assert.ok(melodyPan(country) > melodyPan(trap), 'country melody should sit wider in the stereo field than trap');
+  // Pans always stay legal after scaling.
+  for (const track of country.tracks) assert.ok(track.pan >= -1 && track.pan <= 1);
+});
+
+test('masteringFor: trap squeezes hard with a bass push, country/classical preserve dynamic range', () => {
+  const trap = masteringFor('trap');
+  const country = masteringFor('country');
+  const classical = masteringFor('classical');
+  assert.ok(trap.eq.bassDb > country.eq.bassDb, 'trap should push the low shelf harder than country');
+  assert.ok(trap.limiterThreshold < country.limiterThreshold, 'trap should limit earlier/harder than country');
+  assert.ok(classical.limiterThreshold >= country.limiterThreshold, 'classical keeps the widest dynamic range');
+  // Unknown genres reproduce the pipeline's historical behavior exactly.
+  assert.deepEqual(masteringFor('some-unknown-genre'), {
+    eq: { bassDb: 0, midDb: 0, trebleDb: 0 },
+    limiterThreshold: 0.9,
+  });
+  // Every profile stays within sane bounds.
+  for (const genre of ['trap', 'edm', 'rock', 'lofi', 'ambient', 'cinematic', 'jazz', 'country', 'classical']) {
+    const m = masteringFor(genre);
+    assert.ok(m.limiterThreshold > 0 && m.limiterThreshold <= 1);
+    for (const db of [m.eq.bassDb, m.eq.midDb, m.eq.trebleDb]) assert.ok(Math.abs(db) <= 12);
+  }
 });
 
 test('a 3/4 composition renders to a duration consistent with 3 beats per bar via AudioRenderer', () => {

@@ -43,6 +43,7 @@ const CHORD_PROGRESSIONS = {
   trap: [5, 3, 0, 4],
   rock: [0, 4, 5, 3],
   classical: [0, 3, 4, 0],
+  country: [0, 3, 0, 4], // I-IV-I-V, the classic three-chord country shape
 };
 const DEFAULT_PROGRESSION = [0, 4, 5, 3];
 
@@ -57,6 +58,7 @@ const MELODY_WAVEFORM_BY_GENRE = {
   lofi: 'pluck',
   jazz: 'pluck',
   classical: 'pluck',
+  country: 'pluck', // Karplus-Strong is the closest thing here to a picked string
   ambient: 'pad',
   cinematic: 'pad',
   edm: 'saw',
@@ -76,6 +78,7 @@ const REVERB_BY_GENRE = {
   classical: { wet: 0.4, roomSize: 0.7 },
   jazz: { wet: 0.3, roomSize: 0.6 },
   lofi: { wet: 0.35, roomSize: 0.5 },
+  country: { wet: 0.25, roomSize: 0.55 }, // a modest room, not a hall
   rock: { wet: 0.15, roomSize: 0.4 },
   edm: { wet: 0.12, roomSize: 0.3 },
   trap: { wet: 0.1, roomSize: 0.3 },
@@ -84,6 +87,78 @@ const DEFAULT_REVERB = { wet: 0.2, roomSize: 0.5 };
 
 function reverbFor(genre) {
   return REVERB_BY_GENRE[genre] ?? DEFAULT_REVERB;
+}
+
+// Per-genre timing feel: how far (in beats) melody/vocal notes may be
+// nudged off the quantization grid. 0 for the machine-tight genres — rap/
+// trap and EDM production genuinely quantizes hard to the grid, which is
+// the honest, implementable version of "strict transient alignment" —
+// larger for jazz (laid-back swing feel) and the acoustic genres, where
+// a perfectly quantized performance sounds mechanical.
+const HUMANIZE_BY_GENRE = {
+  trap: 0,
+  edm: 0,
+  rock: 0.01,
+  lofi: 0.02,
+  ambient: 0.02,
+  cinematic: 0.02,
+  country: 0.025,
+  classical: 0.025,
+  jazz: 0.035,
+};
+const DEFAULT_HUMANIZE = 0.02;
+
+function humanizeAmountFor(genre) {
+  return HUMANIZE_BY_GENRE[genre] ?? DEFAULT_HUMANIZE;
+}
+
+// Per-genre stereo field width: a multiplier on each track's base pan.
+// Acoustic ensemble genres (country/classical/jazz) spread the players
+// wide the way a live room micing would; club genres (trap/edm) keep
+// energy near the center so the low end stays mono-solid. Applied to the
+// final composition's track pans, clamped to the legal [-1, 1] range.
+const STEREO_WIDTH_BY_GENRE = {
+  country: 1.6,
+  classical: 1.5,
+  jazz: 1.4,
+  ambient: 1.3,
+  cinematic: 1.3,
+  rock: 1.0,
+  lofi: 1.0,
+  edm: 0.8,
+  trap: 0.7,
+};
+const DEFAULT_STEREO_WIDTH = 1;
+
+function stereoWidthFor(genre) {
+  return STEREO_WIDTH_BY_GENRE[genre] ?? DEFAULT_STEREO_WIDTH;
+}
+
+// Per-genre mastering profile: a tone-shaping EQ curve (fed to MixMaster's
+// real biquad 3-band EQ — note its bass shelf sits at 200Hz; this synth
+// engine doesn't produce meaningful 20-60Hz sub-bass content, so no
+// sub-bass claims) and a limiter threshold. A LOWER threshold means the
+// soft limiter engages earlier and squeezes harder (tight, loud,
+// club-ready trap/edm); a HIGHER threshold means the limiter barely
+// touches the signal, preserving dynamic range — the real technique
+// behind "letting acoustic instruments breathe" in country/classical.
+const MASTERING_BY_GENRE = {
+  trap: { eq: { bassDb: 4, midDb: 1, trebleDb: 0 }, limiterThreshold: 0.85 },
+  edm: { eq: { bassDb: 3, midDb: 0, trebleDb: 1 }, limiterThreshold: 0.85 },
+  rock: { eq: { bassDb: 1, midDb: 2, trebleDb: 1 }, limiterThreshold: 0.88 },
+  lofi: { eq: { bassDb: 2, midDb: 0, trebleDb: -2 }, limiterThreshold: 0.9 }, // warm, rolled-off top
+  ambient: { eq: { bassDb: 0, midDb: 0, trebleDb: 1 }, limiterThreshold: 0.93 },
+  cinematic: { eq: { bassDb: 1, midDb: 0, trebleDb: 1 }, limiterThreshold: 0.93 },
+  jazz: { eq: { bassDb: 1, midDb: 0, trebleDb: 0.5 }, limiterThreshold: 0.95 },
+  country: { eq: { bassDb: 1, midDb: 0, trebleDb: 1.5 }, limiterThreshold: 0.95 }, // acoustic air, minimal squash
+  classical: { eq: { bassDb: 0, midDb: 0, trebleDb: 0 }, limiterThreshold: 0.97 }, // widest dynamic range
+};
+// Matches the pipeline's historical behavior for unknown genres: no tone
+// shaping, limiter at the long-standing 0.9 default.
+const DEFAULT_MASTERING = { eq: { bassDb: 0, midDb: 0, trebleDb: 0 }, limiterThreshold: 0.9 };
+
+function masteringFor(genre) {
+  return MASTERING_BY_GENRE[genre] ?? DEFAULT_MASTERING;
 }
 
 // Genres where a 7th chord (jazzier, more harmonically dense) fits better
@@ -168,7 +243,7 @@ function generateMelody(spec, rng, chords) {
     notes.push(
       createNote({
         pitch: scaleDegreeToPitch(root, degree, spec.mode),
-        start: humanizeTiming(step, rng),
+        start: humanizeTiming(step, rng, humanizeAmountFor(spec.genre)),
         duration: 1,
         velocity: Math.round((70 + Math.floor(rng() * 40)) * dynamics),
       })
@@ -359,7 +434,12 @@ function generateVocalLine(spec, rng, voiceProfile) {
     if (rng() < 0.2) continue; // rest for breath
     const pitch = clampPitchToRange(scaleDegreeToPitch(root, degree, spec.mode), minMidi, maxMidi);
     notes.push(
-      createNote({ pitch, start: humanizeTiming(step, rng), duration: 1, velocity: 80 + Math.floor(rng() * 30) })
+      createNote({
+        pitch,
+        start: humanizeTiming(step, rng, humanizeAmountFor(spec.genre)),
+        duration: 1,
+        velocity: 80 + Math.floor(rng() * 30),
+      })
     );
   }
 
@@ -385,6 +465,15 @@ function generateComposition(spec, { seed } = {}) {
     tracks.push(generateVocalLine(spec, rng, spec.voiceProfile));
   }
 
+  // Genre-driven stereo field: scale each track's base pan by the genre's
+  // width factor (see STEREO_WIDTH_BY_GENRE), clamped to the legal range.
+  const width = stereoWidthFor(spec.genre);
+  if (width !== 1) {
+    for (const track of tracks) {
+      track.pan = Math.max(-1, Math.min(1, track.pan * width));
+    }
+  }
+
   return createComposition({
     title: `${spec.genre}-${spec.mood}-${spec.key}${spec.mode === 'minor' ? 'm' : ''}`,
     tempo: spec.tempo,
@@ -403,6 +492,9 @@ module.exports = {
   chordProgressionFor,
   melodyWaveformFor,
   reverbFor,
+  humanizeAmountFor,
+  stereoWidthFor,
+  masteringFor,
   buildChord,
   generateChordProgression,
   dynamicsCurve,

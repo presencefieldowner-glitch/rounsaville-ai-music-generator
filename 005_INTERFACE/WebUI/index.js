@@ -10,7 +10,7 @@ const http = require('node:http');
 // /api/voice-profile — same paths locally (005_INTERFACE/REST_API) and on
 // Netlify (netlify.toml redirects /api/* to the functions directory).
 
-const GENRES = ['lofi', 'ambient', 'cinematic', 'edm', 'jazz', 'rock', 'classical', 'trap'];
+const GENRES = ['lofi', 'ambient', 'cinematic', 'edm', 'jazz', 'rock', 'classical', 'trap', 'rap', 'country'];
 
 const VOICE_PHRASES = [
   { id: 'low', label: 'Low hum', prompt: 'Hum a comfortable low note for 2-3 seconds.' },
@@ -102,7 +102,7 @@ function getIndexHtml({ apiBaseUrl = '' } = {}) {
   <div class="row">
     <div>
       <label for="style">Style</label>
-      <select id="style">${GENRES.map((g) => `<option value="${g}">${g}</option>`).join('')}</select>
+      <select id="style" title="Each style is a real, distinct treatment: its own chord progression, timbre, reverb space, timing feel (rap/trap/edm are grid-tight, jazz/country are humanized), stereo width, and mastering profile (EQ curve + limiter threshold)">${GENRES.map((g) => `<option value="${g}">${g}</option>`).join('')}</select>
     </div>
     <div>
       <label for="bpm">BPM: <span id="bpmValue">120</span></label>

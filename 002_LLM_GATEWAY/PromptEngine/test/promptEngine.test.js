@@ -139,3 +139,21 @@ test('buildSystemPrompt mentions no-drums/no-bass/waltz when present on the spec
   assert.match(prompt, /no bass/i);
   assert.match(prompt, /3\/4 waltz/i);
 });
+
+test('parsePrompt maps rap onto the trap bucket and country/bluegrass onto the country bucket', () => {
+  assert.equal(parsePrompt('a hard rap beat at 90 bpm').genre, 'trap');
+  assert.equal(parsePrompt('a country ballad about a truck').genre, 'country');
+  assert.equal(parsePrompt('a fast bluegrass tune').genre, 'country');
+});
+
+test('keyword matching is whole-word, so "rap" inside "wrapped"/"grape" does not hit the trap bucket', () => {
+  assert.equal(parsePrompt('a song about wrapped presents').genre, 'ambient'); // default, not trap
+  assert.equal(parsePrompt('a song about grape vines').genre, 'ambient');
+  assert.equal(parsePrompt('a song about my housewife era').genre, 'ambient'); // not edm via "house"
+});
+
+test('multi-word keywords still match after the whole-word fix', () => {
+  assert.equal(parsePrompt('a hip hop beat').genre, 'trap');
+  assert.equal(parsePrompt('a film score cue for strings').genre, 'cinematic');
+  assert.equal(parsePrompt('a lo-fi study beat').genre, 'lofi');
+});
