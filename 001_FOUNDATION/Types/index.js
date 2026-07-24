@@ -26,10 +26,11 @@ function isValidNote(note) {
   );
 }
 
-function createTrack({ name, instrument = 'synth', waveform = 'sine', notes = [], gain = 0.8 }) {
+function createTrack({ name, instrument = 'synth', waveform = 'sine', notes = [], gain = 0.8, pan = 0 }) {
   if (!name) throw new TypeError('Track.name is required');
   if (!notes.every(isValidNote)) throw new TypeError('Track.notes contains an invalid note');
-  return { name, instrument, waveform, notes, gain };
+  if (!Number.isFinite(pan) || pan < -1 || pan > 1) throw new TypeError('Track.pan must be a number in [-1, 1]');
+  return { name, instrument, waveform, notes, gain, pan };
 }
 
 function createComposition({
@@ -40,10 +41,21 @@ function createComposition({
   timeSignature = [4, 4],
   bars = 8,
   tracks = [],
+  reverb = { wet: 0.2, roomSize: 0.5 },
 }) {
   if (!Number.isFinite(tempo) || tempo <= 0) throw new TypeError('Composition.tempo must be > 0');
   if (!Array.isArray(tracks)) throw new TypeError('Composition.tracks must be an array');
-  return { title, tempo, key, mode, timeSignature, bars, tracks };
+  const clamp01 = (v, fallback) => (Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : fallback);
+  return {
+    title,
+    tempo,
+    key,
+    mode,
+    timeSignature,
+    bars,
+    tracks,
+    reverb: { wet: clamp01(reverb?.wet, 0.2), roomSize: clamp01(reverb?.roomSize, 0.5) },
+  };
 }
 
 function isValidComposition(composition) {

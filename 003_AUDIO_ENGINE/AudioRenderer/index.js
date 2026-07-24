@@ -2,11 +2,21 @@
 
 const { synthesizeNote } = require('../SynthEngine');
 
-// Renders a Composition (from 001_FOUNDATION/Types) into a mono Float32
-// buffer, and encodes that buffer as a real, playable 16-bit PCM WAV file.
+// Renders a Composition (from 001_FOUNDATION/Types) into true stereo
+// Float32 left/right buffers using each track's `pan`, and encodes that
+// as a real, playable 16-bit PCM WAV file (mono or stereo).
 
 function secondsPerBeat(tempo) {
   return 60 / tempo;
+}
+
+// Equal-power pan law: -1 is full left, 0 is center (both channels at
+// ~0.707, i.e. -3dB each so a centered mono source doesn't get louder
+// than a hard-panned one), +1 is full right.
+function panGains(pan) {
+  const clamped = Math.max(-1, Math.min(1, pan ?? 0));
+  const angle = ((clamped + 1) * Math.PI) / 4;
+  return { left: Math.cos(angle), right: Math.sin(angle) };
 }
 
 function renderComposition(composition, { sampleRate = 44100 } = {}) {
@@ -14,10 +24,12 @@ function renderComposition(composition, { sampleRate = 44100 } = {}) {
   const [beatsPerBar] = composition.timeSignature ?? [4, 4];
   const totalSeconds = composition.bars * beatsPerBar * beatSeconds + 1; // +1s tail for release
   const totalSamples = Math.ceil(totalSeconds * sampleRate);
-  const buffer = new Float32Array(totalSamples);
+  const left = new Float32Array(totalSamples);
+  const right = new Float32Array(totalSamples);
 
   for (const track of composition.tracks) {
     const trackGain = track.gain ?? 0.8;
+    const { left: gainLeft, right: gainRight } = panGains(track.pan);
     for (const note of track.notes) {
       const startSample = Math.round(note.start * beatSeconds * sampleRate);
       const rendered = synthesizeNote(
@@ -27,12 +39,25 @@ function renderComposition(composition, { sampleRate = 44100 } = {}) {
       );
       for (let i = 0; i < rendered.length; i += 1) {
         const idx = startSample + i;
-        if (idx < buffer.length) buffer[idx] += rendered[i] * trackGain;
+        if (idx < totalSamples) {
+          const sample = rendered[i] * trackGain;
+          left[idx] += sample * gainLeft;
+          right[idx] += sample * gainRight;
+        }
       }
     }
   }
 
-  return { buffer, sampleRate };
+  return { left, right, sampleRate };
+}
+
+function interleaveStereo(left, right) {
+  const out = new Float32Array(left.length * 2);
+  for (let i = 0; i < left.length; i += 1) {
+    out[i * 2] = left[i];
+    out[i * 2 + 1] = right[i];
+  }
+  return out;
 }
 
 function floatTo16BitPCM(float32Samples) {
@@ -131,4 +156,12 @@ function decodeWav(buffer) {
   return { samples: mono, sampleRate: fmt.sampleRate, numChannels: fmt.numChannels };
 }
 
-module.exports = { renderComposition, encodeWav, decodeWav, floatTo16BitPCM, secondsPerBeat };
+module.exports = {
+  renderComposition,
+  interleaveStereo,
+  panGains,
+  encodeWav,
+  decodeWav,
+  floatTo16BitPCM,
+  secondsPerBeat,
+};

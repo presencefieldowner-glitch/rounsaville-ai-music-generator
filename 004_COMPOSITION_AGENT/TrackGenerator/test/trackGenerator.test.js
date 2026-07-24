@@ -8,11 +8,13 @@ const {
   scaleDegreeToPitch,
   chordProgressionFor,
   melodyWaveformFor,
+  reverbFor,
   buildChord,
   generateChordProgression,
   dynamicsCurve,
   pitchHzToMidi,
   clampPitchToRange,
+  isFillBar,
   generateComposition,
 } = require('../index.js');
 
@@ -35,6 +37,10 @@ test('generateComposition produces a valid Composition with melody/chords/bass/d
     ['melody', 'chords', 'bass', 'drums']
   );
   assert.ok(composition.tracks.every((t) => t.notes.length > 0));
+  const melody = composition.tracks.find((t) => t.name === 'melody');
+  const chords = composition.tracks.find((t) => t.name === 'chords');
+  assert.ok(melody.pan > 0, 'melody should pan right of center');
+  assert.ok(chords.pan < 0, 'chords should pan left of center, opposite the melody');
 });
 
 test('generateComposition is deterministic for the same seed', () => {
@@ -106,16 +112,39 @@ test('melodyWaveformFor maps genres to distinct real timbres, falling back to si
   assert.equal(melodyWaveformFor('unknown-genre'), 'sine');
 });
 
+test('reverbFor gives cinematic/ambient a wetter, bigger space than edm/trap', () => {
+  assert.ok(reverbFor('cinematic').wet > reverbFor('edm').wet);
+  assert.ok(reverbFor('ambient').roomSize > reverbFor('trap').roomSize);
+  assert.deepEqual(reverbFor('unknown-genre'), { wet: 0.2, roomSize: 0.5 });
+});
+
+test('generateComposition sets the composition reverb from the genre', () => {
+  const composition = generateComposition({ ...spec, genre: 'cinematic' }, { seed: 1 });
+  assert.deepEqual(composition.reverb, reverbFor('cinematic'));
+});
+
 test('buildChord stacks diatonic thirds (root, third, fifth)', () => {
   const chord = buildChord(60, 0, 'major'); // C major triad from C4
   assert.deepEqual(chord, [60, 64, 67]); // C, E, G
+});
+
+test('buildChord adds a 7th when extended is requested', () => {
+  const chord = buildChord(60, 0, 'major', true); // Cmaj7 from C4
+  assert.deepEqual(chord, [60, 64, 67, 71]); // C, E, G, B
+});
+
+test('generateChordProgression uses 7th chords for jazz/cinematic, triads otherwise', () => {
+  const jazzChords = generateChordProgression({ ...spec, genre: 'jazz' });
+  const rockChords = generateChordProgression({ ...spec, genre: 'rock' });
+  assert.ok(jazzChords.every((c) => c.pitches.length === 4));
+  assert.ok(rockChords.every((c) => c.pitches.length === 3));
 });
 
 test('generateChordProgression assigns one chord per bar, cycling the progression', () => {
   const chords = generateChordProgression({ ...spec, genre: 'jazz', bars: 6 });
   assert.equal(chords.length, 6);
   assert.equal(chords[0].degreeIndex, chords[4].degreeIndex); // progression length 4, cycles at bar 4
-  assert.ok(chords.every((c) => c.pitches.length === 3));
+  assert.ok(chords.every((c) => c.pitches.length === 4)); // jazz uses extended (7th) chords
 });
 
 test('dynamicsCurve fades in at the start, holds mid, fades out at the end', () => {
@@ -130,12 +159,34 @@ test('the melody follows the harmony: strong-beat notes land on the current chor
   const melody = composition.tracks.find((t) => t.name === 'melody');
 
   const root = keyToMidiRoot(spec.key, 5);
+  let checkedAtLeastOne = false;
   for (const note of melody.notes) {
-    if (note.start % 4 !== 0) continue; // only check strong-beat (bar downbeat) notes
-    const bar = Math.floor(note.start / 4);
+    const nearestStep = Math.round(note.start); // timing is humanized, so compare to the intended step
+    if (nearestStep % 4 !== 0) continue; // only check strong-beat (bar downbeat) notes
+    checkedAtLeastOne = true;
+    const bar = Math.floor(nearestStep / 4);
     const chordDegree = chords[bar % chords.length].degreeIndex;
     const chordToneClasses = [0, 2, 4].map((i) => (root + scaleDegreeToPitch(0, chordDegree + i, spec.mode)) % 12);
     assert.ok(chordToneClasses.includes(note.pitch % 12), `bar ${bar} downbeat pitch ${note.pitch} isn't a chord tone`);
+  }
+  assert.ok(checkedAtLeastOne, 'expected at least one strong-beat note to actually be checked');
+});
+
+test('melody/vocal timing is humanized within a small bound; bass/chords/drums stay quantized', () => {
+  const composition = generateComposition({ ...spec, bars: 4, instrumental: false }, { seed: 6 });
+  const melody = composition.tracks.find((t) => t.name === 'melody');
+  const bass = composition.tracks.find((t) => t.name === 'bass');
+
+  let anyOffQuantization = false;
+  for (const note of melody.notes) {
+    const offset = Math.abs(note.start - Math.round(note.start));
+    assert.ok(offset <= 0.02 + 1e-9, `melody note offset ${offset} exceeds the humanization bound`);
+    if (offset > 1e-9) anyOffQuantization = true;
+  }
+  assert.ok(anyOffQuantization, 'expected at least one melody note to actually be nudged off-grid');
+
+  for (const note of bass.notes) {
+    assert.equal(note.start, Math.round(note.start)); // bass stays perfectly quantized
   }
 });
 
@@ -147,4 +198,27 @@ test('the bassline plays the chord progression root on every bar', () => {
   bass.notes.forEach((note, i) => {
     assert.equal(note.start, i * 4);
   });
+});
+
+test('isFillBar marks phrase-ends (every 4th bar) and always the final bar', () => {
+  assert.equal(isFillBar(0, 8), false);
+  assert.equal(isFillBar(3, 8), true); // end of first 4-bar phrase
+  assert.equal(isFillBar(7, 8), true); // end of second phrase + final bar
+  assert.equal(isFillBar(4, 8), false);
+  assert.equal(isFillBar(2, 5), false);
+  assert.equal(isFillBar(4, 5), true); // final bar of a 5-bar piece, not a phrase end
+  assert.equal(isFillBar(0, 1), false);
+});
+
+test('drum fills add a snare roll on phrase-end/final bars instead of the single normal-bar snare hit', () => {
+  const composition = generateComposition({ ...spec, bars: 4 }, { seed: 2 });
+  const drums = composition.tracks.find((t) => t.name === 'drums');
+
+  const snaresInBar = (bar) =>
+    drums.notes.filter((n) => n.pitch === 38 && Math.floor(n.start / 4) === bar).length;
+
+  assert.equal(snaresInBar(0), 2); // normal bar: backbeat on beats 2 and 4
+  assert.equal(snaresInBar(1), 2);
+  assert.equal(snaresInBar(2), 2);
+  assert.equal(snaresInBar(3), 4); // fill bar (phrase end + final bar): snare roll
 });

@@ -11,6 +11,7 @@ const {
   retry,
   createRng,
   hashStringToSeed,
+  createRateLimiter,
 } = require('../index.js');
 
 test('generateId produces unique, prefixed ids', () => {
@@ -57,4 +58,31 @@ test('createRng is deterministic for a given seed', () => {
   for (const value of seqA) {
     assert.ok(value >= 0 && value < 1);
   }
+});
+
+test('createRateLimiter allows up to capacity requests, then blocks', () => {
+  const limiter = createRateLimiter({ capacity: 3, refillPerSecond: 1 });
+  const now = 1_000_000;
+  assert.equal(limiter.take('a', now).allowed, true);
+  assert.equal(limiter.take('a', now).allowed, true);
+  assert.equal(limiter.take('a', now).allowed, true);
+  const blocked = limiter.take('a', now);
+  assert.equal(blocked.allowed, false);
+  assert.ok(blocked.retryAfterSeconds > 0);
+});
+
+test('createRateLimiter refills tokens over time', () => {
+  const limiter = createRateLimiter({ capacity: 1, refillPerSecond: 1 });
+  const now = 1_000_000;
+  assert.equal(limiter.take('a', now).allowed, true);
+  assert.equal(limiter.take('a', now).allowed, false); // no tokens left yet
+  assert.equal(limiter.take('a', now + 1100).allowed, true); // ~1.1s later, refilled
+});
+
+test('createRateLimiter tracks separate keys independently', () => {
+  const limiter = createRateLimiter({ capacity: 1, refillPerSecond: 0.1 });
+  const now = 1_000_000;
+  assert.equal(limiter.take('a', now).allowed, true);
+  assert.equal(limiter.take('b', now).allowed, true); // different key, unaffected by 'a'
+  assert.equal(limiter.take('a', now).allowed, false);
 });

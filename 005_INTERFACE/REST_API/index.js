@@ -1,25 +1,33 @@
 'use strict';
 
 const http = require('node:http');
-const { createLogger } = require('../../001_FOUNDATION/Utilities');
+const { createLogger, createRateLimiter } = require('../../001_FOUNDATION/Utilities');
 const { sanitizePrompt, validateSpec } = require('../../002_LLM_GATEWAY/Guardrails');
 const { parsePrompt } = require('../../002_LLM_GATEWAY/PromptEngine');
 const { createModelRouter } = require('../../002_LLM_GATEWAY/ModelRouter');
 const { generateComposition } = require('../../004_COMPOSITION_AGENT/TrackGenerator');
 const { createSessionManager } = require('../../004_COMPOSITION_AGENT/SessionManager');
 const { createCompositionMemory } = require('../../004_COMPOSITION_AGENT/CompositionMemory');
-const { renderComposition, encodeWav, decodeWav } = require('../../003_AUDIO_ENGINE/AudioRenderer');
-const { normalize, applyLimiter } = require('../../003_AUDIO_ENGINE/MixMaster');
+const { renderComposition, interleaveStereo, encodeWav, decodeWav } = require('../../003_AUDIO_ENGINE/AudioRenderer');
+const { normalizeStereo, applyLimiterStereo, applyReverbStereo } = require('../../003_AUDIO_ENGINE/MixMaster');
 const { analyzeVoiceSample, buildVoiceProfile } = require('../../003_AUDIO_ENGINE/VoiceProfiler');
 
 const logger = createLogger('REST_API', { level: 'warn' });
 
-function readJsonBody(req) {
+// Voice recordings are legitimately much bigger than a JSON prompt body
+// (a few seconds of 16-bit PCM WAV, base64-encoded, per phrase), so the
+// body-size cap is route-dependent rather than one global number.
+const DEFAULT_MAX_BODY_BYTES = 200_000;
+const VOICE_PROFILE_MAX_BODY_BYTES = 20_000_000;
+const MAX_VOICE_SAMPLES = 10;
+const MAX_VOICE_SAMPLE_BASE64_LENGTH = 8_000_000; // ~6MB decoded, well over a few seconds of 16-bit mono WAV
+
+function readJsonBody(req, { maxBytes = DEFAULT_MAX_BODY_BYTES } = {}) {
   return new Promise((resolve, reject) => {
     let raw = '';
     req.on('data', (chunk) => {
       raw += chunk;
-      if (raw.length > 1_000_000) req.destroy(new Error('payload too large'));
+      if (raw.length > maxBytes) req.destroy(new Error('payload too large'));
     });
     req.on('end', () => {
       if (!raw) return resolve({});
@@ -49,16 +57,22 @@ function defaultModelRouter() {
 // prompt text -> sanitized spec -> composition -> rendered/mastered WAV.
 async function runGeneration(body, modelRouter) {
   const cleanPrompt = sanitizePrompt(body.prompt ?? '');
+  const parsedSpec = parsePrompt(cleanPrompt);
+  // An explicit body.instrumental (from a UI toggle) wins; otherwise fall
+  // back to whatever the prompt text itself said (see PromptEngine's
+  // detectInstrumental), which can also be undefined.
   const spec = validateSpec({
-    ...parsePrompt(cleanPrompt),
-    instrumental: body.instrumental,
+    ...parsedSpec,
+    instrumental: body.instrumental ?? parsedSpec.instrumental,
     voiceProfile: body.voiceProfile,
   });
 
   const { modelUsed, result: composition } = await modelRouter.route(spec);
-  const { buffer, sampleRate } = renderComposition(composition);
-  const mastered = applyLimiter(normalize(buffer));
-  const wav = encodeWav(mastered, sampleRate, 1);
+  const { left, right, sampleRate } = renderComposition(composition);
+  const reverberated = applyReverbStereo(left, right, sampleRate, composition.reverb);
+  const normalized = normalizeStereo(reverberated.left, reverberated.right);
+  const mastered = applyLimiterStereo(normalized.left, normalized.right);
+  const wav = encodeWav(interleaveStereo(mastered.left, mastered.right), sampleRate, 2);
 
   return { cleanPrompt, spec, modelUsed, composition, sampleRate, wav };
 }
@@ -79,6 +93,10 @@ function createApp({
   sessionManager = createSessionManager(),
   compositionMemory = createCompositionMemory(),
   modelRouter = defaultModelRouter(),
+  // Only meaningful for this persistent process — a serverless deployment
+  // (see netlify/functions/) doesn't share this in-memory bucket map
+  // across invocations, so it isn't rate-limited by this mechanism.
+  rateLimiter = createRateLimiter({ capacity: 20, refillPerSecond: 0.5 }),
 } = {}) {
   async function handleCreateSession(req, res) {
     const body = await readJsonBody(req);
@@ -117,10 +135,17 @@ function createApp({
   // returns a pitch-range profile. This calibrates the synth's vocal range
   // to the speaker's real pitch — it is not neural voice cloning.
   async function handleVoiceProfile(req, res) {
-    const body = await readJsonBody(req);
+    const body = await readJsonBody(req, { maxBytes: VOICE_PROFILE_MAX_BODY_BYTES });
     const base64Samples = body.samples ?? (body.base64Wav ? [body.base64Wav] : []);
     if (!Array.isArray(base64Samples) || base64Samples.length === 0) {
       return sendJson(res, 400, { error: 'at least one base64-encoded WAV sample is required' });
+    }
+    if (base64Samples.length > MAX_VOICE_SAMPLES) {
+      return sendJson(res, 400, { error: `too many voice samples (max ${MAX_VOICE_SAMPLES})` });
+    }
+    const oversized = base64Samples.find((s) => typeof s !== 'string' || s.length > MAX_VOICE_SAMPLE_BASE64_LENGTH);
+    if (oversized !== undefined) {
+      return sendJson(res, 400, { error: 'a voice sample exceeds the maximum allowed size' });
     }
 
     const analyses = base64Samples.map((base64Wav) => {
@@ -141,6 +166,23 @@ function createApp({
   async function router(req, res) {
     const url = new URL(req.url, 'http://localhost');
     const parts = url.pathname.split('/').filter(Boolean);
+
+    // Only the compute-heavy routes (composition rendering, voice
+    // analysis) are rate-limited — health checks and session reads stay
+    // unrestricted.
+    const isRateLimitedRoute =
+      req.method === 'POST' &&
+      parts[0] === 'api' &&
+      (parts[1] === 'generate' || parts[1] === 'voice-profile' || (parts[1] === 'sessions' && parts[3] === 'generate'));
+
+    if (isRateLimitedRoute) {
+      const clientKey = req.socket?.remoteAddress ?? 'unknown';
+      const limit = rateLimiter.take(clientKey);
+      if (!limit.allowed) {
+        res.setHeader('Retry-After', String(limit.retryAfterSeconds));
+        return sendJson(res, 429, { error: 'rate limit exceeded', retryAfterSeconds: limit.retryAfterSeconds });
+      }
+    }
 
     try {
       if (req.method === 'GET' && parts[0] === 'api' && parts[1] === 'health') {
@@ -185,4 +227,10 @@ function startServer(port = 0, appOptions = {}) {
   });
 }
 
-module.exports = { createApp, startServer, readJsonBody };
+module.exports = {
+  createApp,
+  startServer,
+  readJsonBody,
+  MAX_VOICE_SAMPLES,
+  MAX_VOICE_SAMPLE_BASE64_LENGTH,
+};

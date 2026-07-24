@@ -2,8 +2,9 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { startServer } = require('../index.js');
+const { startServer, MAX_VOICE_SAMPLES } = require('../index.js');
 const { encodeWav } = require('../../../003_AUDIO_ENGINE/AudioRenderer');
+const { createRateLimiter } = require('../../../001_FOUNDATION/Utilities');
 
 function sineWavBase64(frequency, seconds, sampleRate) {
   const n = Math.round(seconds * sampleRate);
@@ -12,8 +13,8 @@ function sineWavBase64(frequency, seconds, sampleRate) {
   return encodeWav(samples, sampleRate, 1).toString('base64');
 }
 
-async function withServer(fn) {
-  const { server, app } = await startServer(0);
+async function withServer(fn, appOptions = {}) {
+  const { server, app } = await startServer(0, appOptions);
   const port = server.address().port;
   const baseUrl = `http://127.0.0.1:${port}`;
   try {
@@ -90,6 +91,7 @@ test('full pipeline: format=wav returns a real audio/wav response', async () => 
     const bytes = Buffer.from(await genRes.arrayBuffer());
     assert.equal(bytes.toString('ascii', 0, 4), 'RIFF');
     assert.equal(bytes.toString('ascii', 8, 12), 'WAVE');
+    assert.equal(bytes.readUInt16LE(22), 2); // real stereo output, not mono
   });
 });
 
@@ -143,6 +145,33 @@ test('POST /api/generate with instrumental: false adds a vocal track', async () 
   });
 });
 
+test('POST /api/generate: an instrumental request stated only in the prompt text (no explicit flag) still omits vocals', async () => {
+  await withServer(async ({ baseUrl }) => {
+    const res = await fetch(`${baseUrl}/api/generate`, {
+      method: 'POST',
+      body: JSON.stringify({ prompt: 'an instrumental jazz track in C major at 110 bpm, 4 bars' }),
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.composition.tracks.find((t) => t.name === 'vocal'), undefined);
+  });
+});
+
+test('POST /api/generate: an explicit instrumental: false flag overrides an instrumental-sounding prompt', async () => {
+  await withServer(async ({ baseUrl }) => {
+    const res = await fetch(`${baseUrl}/api/generate`, {
+      method: 'POST',
+      body: JSON.stringify({
+        prompt: 'an instrumental jazz track in C major at 110 bpm, 4 bars',
+        instrumental: false,
+      }),
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.ok(body.composition.tracks.find((t) => t.name === 'vocal'));
+  });
+});
+
 test('POST /api/generate accepts a voiceProfile and constrains the vocal range', async () => {
   await withServer(async ({ baseUrl }) => {
     const res = await fetch(`${baseUrl}/api/generate`, {
@@ -180,4 +209,61 @@ test('POST /api/voice-profile with no samples returns 400', async () => {
     const res = await fetch(`${baseUrl}/api/voice-profile`, { method: 'POST', body: '{}' });
     assert.equal(res.status, 400);
   });
+});
+
+test('POST /api/voice-profile rejects more than the max sample count', async () => {
+  await withServer(async ({ baseUrl }) => {
+    const sample = sineWavBase64(180, 0.05, 8000);
+    const samples = new Array(MAX_VOICE_SAMPLES + 1).fill(sample);
+    const res = await fetch(`${baseUrl}/api/voice-profile`, {
+      method: 'POST',
+      body: JSON.stringify({ samples }),
+    });
+    assert.equal(res.status, 400);
+    const body = await res.json();
+    assert.match(body.error, /too many/i);
+  });
+});
+
+test('POST /api/voice-profile rejects an oversized individual sample', async () => {
+  await withServer(async ({ baseUrl }) => {
+    const res = await fetch(`${baseUrl}/api/voice-profile`, {
+      method: 'POST',
+      body: JSON.stringify({ samples: ['A'.repeat(9_000_000)] }),
+    });
+    assert.equal(res.status, 400);
+    const body = await res.json();
+    assert.match(body.error, /exceeds the maximum/i);
+  });
+});
+
+test('rate limiting: exceeding capacity on a compute-heavy route returns 429 with Retry-After', async () => {
+  await withServer(
+    async ({ baseUrl }) => {
+      const makeRequest = () =>
+        fetch(`${baseUrl}/api/generate`, { method: 'POST', body: JSON.stringify({ prompt: 'a lofi track' }) });
+
+      const first = await makeRequest();
+      assert.equal(first.status, 200);
+
+      const second = await makeRequest();
+      assert.equal(second.status, 429);
+      assert.ok(second.headers.get('retry-after'));
+      const body = await second.json();
+      assert.match(body.error, /rate limit/i);
+    },
+    { rateLimiter: createRateLimiter({ capacity: 1, refillPerSecond: 0.001 }) }
+  );
+});
+
+test('rate limiting does not apply to health checks', async () => {
+  await withServer(
+    async ({ baseUrl }) => {
+      for (let i = 0; i < 5; i += 1) {
+        const res = await fetch(`${baseUrl}/api/health`);
+        assert.equal(res.status, 200);
+      }
+    },
+    { rateLimiter: createRateLimiter({ capacity: 1, refillPerSecond: 0.001 }) }
+  );
 });

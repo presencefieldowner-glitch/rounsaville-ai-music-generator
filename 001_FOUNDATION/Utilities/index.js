@@ -81,6 +81,35 @@ function createLogger(name, { level = 'info' } = {}) {
   };
 }
 
+// Classic token-bucket rate limiter, keyed by an arbitrary string (e.g. a
+// client IP). Each key gets its own bucket of `capacity` tokens that
+// refill continuously at `refillPerSecond`; each take() costs one token.
+// Only meaningful for a process with persistent in-memory state — it does
+// NOT protect a serverless deployment, where separate invocations don't
+// share this Map.
+function createRateLimiter({ capacity = 20, refillPerSecond = 0.5 } = {}) {
+  const buckets = new Map();
+
+  function take(key, now = Date.now()) {
+    const bucket = buckets.get(key) ?? { tokens: capacity, lastRefill: now };
+    const elapsedSeconds = Math.max(0, (now - bucket.lastRefill) / 1000);
+    bucket.tokens = Math.min(capacity, bucket.tokens + elapsedSeconds * refillPerSecond);
+    bucket.lastRefill = now;
+
+    if (bucket.tokens < 1) {
+      buckets.set(key, bucket);
+      const retryAfterSeconds = Math.ceil((1 - bucket.tokens) / refillPerSecond);
+      return { allowed: false, retryAfterSeconds };
+    }
+
+    bucket.tokens -= 1;
+    buckets.set(key, bucket);
+    return { allowed: true, remaining: Math.floor(bucket.tokens) };
+  }
+
+  return { take, size: () => buckets.size };
+}
+
 module.exports = {
   generateId,
   clamp,
@@ -92,4 +121,5 @@ module.exports = {
   createRng,
   hashStringToSeed,
   createLogger,
+  createRateLimiter,
 };

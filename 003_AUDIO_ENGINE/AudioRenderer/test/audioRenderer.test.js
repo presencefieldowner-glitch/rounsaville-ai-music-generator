@@ -2,9 +2,9 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { renderComposition, encodeWav, decodeWav, floatTo16BitPCM } = require('../index.js');
+const { renderComposition, interleaveStereo, panGains, encodeWav, decodeWav, floatTo16BitPCM } = require('../index.js');
 
-function makeComposition() {
+function makeComposition(pan) {
   return {
     tempo: 120,
     timeSignature: [4, 4],
@@ -13,6 +13,7 @@ function makeComposition() {
       {
         waveform: 'sine',
         gain: 0.5,
+        pan,
         notes: [
           { pitch: 60, start: 0, duration: 1, velocity: 100 },
           { pitch: 64, start: 1, duration: 1, velocity: 100 },
@@ -22,12 +23,48 @@ function makeComposition() {
   };
 }
 
-test('renderComposition produces a non-silent buffer of the right length order', () => {
-  const { buffer, sampleRate } = renderComposition(makeComposition(), { sampleRate: 8000 });
+test('renderComposition produces non-silent left/right buffers of the right length order', () => {
+  const { left, right, sampleRate } = renderComposition(makeComposition(0), { sampleRate: 8000 });
   assert.equal(sampleRate, 8000);
-  assert.ok(buffer.length > 8000 * 2); // at least 2s of the 3s (2 beats + tail) at 120bpm
-  const hasSignal = [...buffer].some((v) => Math.abs(v) > 0.01);
-  assert.ok(hasSignal);
+  assert.equal(left.length, right.length);
+  assert.ok(left.length > 8000 * 2); // at least 2s of the 3s (2 beats + tail) at 120bpm
+  assert.ok([...left].some((v) => Math.abs(v) > 0.01));
+  assert.ok([...right].some((v) => Math.abs(v) > 0.01));
+});
+
+test('panGains: -1 is full left, 0 is equal-power center, +1 is full right', () => {
+  const hardLeft = panGains(-1);
+  assert.ok(Math.abs(hardLeft.left - 1) < 1e-9);
+  assert.ok(Math.abs(hardLeft.right - 0) < 1e-9);
+
+  const center = panGains(0);
+  assert.ok(Math.abs(center.left - center.right) < 1e-9);
+  assert.ok(Math.abs(center.left - Math.SQRT1_2) < 1e-9); // ~0.707, equal-power center
+
+  const hardRight = panGains(1);
+  assert.ok(Math.abs(hardRight.left - 0) < 1e-9);
+  assert.ok(Math.abs(hardRight.right - 1) < 1e-9);
+});
+
+test('panGains clamps out-of-range pan values', () => {
+  assert.deepEqual(panGains(-5), panGains(-1));
+  assert.deepEqual(panGains(5), panGains(1));
+});
+
+test('renderComposition routes a hard-left-panned track almost entirely to the left channel', () => {
+  const { left, right } = renderComposition(makeComposition(-1), { sampleRate: 8000 });
+  const peak = (buf) => Math.max(...[...buf].map(Math.abs));
+  assert.ok(peak(left) > 0.1);
+  assert.ok(peak(right) < 1e-6);
+});
+
+test('interleaveStereo produces LRLR... ordering at twice the length', () => {
+  const left = new Float32Array([0.1, 0.2, 0.3]);
+  const right = new Float32Array([-0.1, -0.2, -0.3]);
+  const interleaved = interleaveStereo(left, right);
+  assert.equal(interleaved.length, 6);
+  const expected = [0.1, -0.1, 0.2, -0.2, 0.3, -0.3];
+  interleaved.forEach((v, i) => assert.ok(Math.abs(v - expected[i]) < 1e-6));
 });
 
 test('floatTo16BitPCM maps [-1, 1] to the full Int16 range', () => {

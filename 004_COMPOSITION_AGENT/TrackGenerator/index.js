@@ -68,19 +68,44 @@ function melodyWaveformFor(genre) {
   return MELODY_WAVEFORM_BY_GENRE[genre] ?? 'sine';
 }
 
-// A stacked-thirds triad (root, third, fifth) built diatonically from the
-// scale, so it's automatically major/minor-appropriate for each degree.
-function buildChord(root, degreeIndex, mode) {
-  return [0, 2, 4].map((interval) => scaleDegreeToPitch(root, degreeIndex + interval, mode));
+// Reverb space per genre: cinematic/ambient get a large, wet hall; edm/trap
+// stay tight and dry so the low end doesn't get muddy.
+const REVERB_BY_GENRE = {
+  cinematic: { wet: 0.5, roomSize: 0.85 },
+  ambient: { wet: 0.45, roomSize: 0.8 },
+  classical: { wet: 0.4, roomSize: 0.7 },
+  jazz: { wet: 0.3, roomSize: 0.6 },
+  lofi: { wet: 0.35, roomSize: 0.5 },
+  rock: { wet: 0.15, roomSize: 0.4 },
+  edm: { wet: 0.12, roomSize: 0.3 },
+  trap: { wet: 0.1, roomSize: 0.3 },
+};
+const DEFAULT_REVERB = { wet: 0.2, roomSize: 0.5 };
+
+function reverbFor(genre) {
+  return REVERB_BY_GENRE[genre] ?? DEFAULT_REVERB;
+}
+
+// Genres where a 7th chord (jazzier, more harmonically dense) fits better
+// than a plain triad.
+const EXTENDED_CHORD_GENRES = new Set(['jazz', 'cinematic']);
+
+// A stacked-thirds chord (root, third, fifth, and optionally a 7th) built
+// diatonically from the scale, so it's automatically major/minor-
+// appropriate for each degree.
+function buildChord(root, degreeIndex, mode, extended = false) {
+  const intervals = extended ? [0, 2, 4, 6] : [0, 2, 4];
+  return intervals.map((interval) => scaleDegreeToPitch(root, degreeIndex + interval, mode));
 }
 
 function generateChordProgression(spec) {
   const root = keyToMidiRoot(spec.key, 3);
   const progression = chordProgressionFor(spec.genre);
+  const extended = EXTENDED_CHORD_GENRES.has(spec.genre);
   const chords = [];
   for (let bar = 0; bar < spec.bars; bar += 1) {
     const degreeIndex = progression[bar % progression.length];
-    chords.push({ bar, degreeIndex, pitches: buildChord(root, degreeIndex, spec.mode) });
+    chords.push({ bar, degreeIndex, pitches: buildChord(root, degreeIndex, spec.mode, extended) });
   }
   return chords;
 }
@@ -100,6 +125,13 @@ function dynamicsCurve(barIndex, totalBars) {
     return 1 - 0.4 * progress;
   }
   return 1;
+}
+
+// Nudges a note's start time by a small random amount (real music
+// production practice: quantized bass/drums but a slightly "performed"
+// feel on lead/vocal lines) without ever pushing it negative.
+function humanizeTiming(start, rng, amountBeats = 0.02) {
+  return Math.max(0, start + (rng() * 2 - 1) * amountBeats);
 }
 
 function generateMelody(spec, rng, chords) {
@@ -131,14 +163,21 @@ function generateMelody(spec, rng, chords) {
     notes.push(
       createNote({
         pitch: scaleDegreeToPitch(root, degree, spec.mode),
-        start: step,
+        start: humanizeTiming(step, rng),
         duration: 1,
         velocity: Math.round((70 + Math.floor(rng() * 40)) * dynamics),
       })
     );
   }
 
-  return createTrack({ name: 'melody', instrument: 'lead', waveform: melodyWaveformFor(spec.genre), notes, gain: 0.7 });
+  return createTrack({
+    name: 'melody',
+    instrument: 'lead',
+    waveform: melodyWaveformFor(spec.genre),
+    notes,
+    gain: 0.7,
+    pan: 0.2, // slightly right, so it doesn't sit on top of the chords
+  });
 }
 
 function generateChordsTrack(spec, rng, chords) {
@@ -159,7 +198,14 @@ function generateChordsTrack(spec, rng, chords) {
     }
   }
 
-  return createTrack({ name: 'chords', instrument: 'pad', waveform: 'pad', notes, gain: 0.5 });
+  return createTrack({
+    name: 'chords',
+    instrument: 'pad',
+    waveform: 'pad',
+    notes,
+    gain: 0.5,
+    pan: -0.3, // slightly left, mirroring the melody's pan for separation
+  });
 }
 
 function generateBassline(spec, rng, chords) {
@@ -186,17 +232,32 @@ function generateBassline(spec, rng, chords) {
 // low MIDI numbers purely so they render as short, distinct clicks.
 const DRUM_PITCHES = { kick: 36, snare: 38, hihat: 42 };
 
+// The last bar of every 4-bar phrase (and always the final bar of the
+// piece) gets a fill instead of the steady pattern — a real, common
+// drumming arrangement technique that signals a section is about to turn
+// over.
+function isFillBar(bar, totalBars) {
+  if (totalBars <= 1) return false;
+  const isPhraseEnd = (bar + 1) % 4 === 0;
+  const isLastBar = bar === totalBars - 1;
+  return isPhraseEnd || isLastBar;
+}
+
 function generateDrumPattern(spec, rng) {
   const stepsPerBar = 8; // eighth notes
   const notes = [];
 
   for (let bar = 0; bar < spec.bars; bar += 1) {
+    const fill = isFillBar(bar, spec.bars);
     for (let step = 0; step < stepsPerBar; step += 1) {
       const start = bar * (stepsPerBar / 2) + step * 0.5;
       if (step % 4 === 0) {
         notes.push(createNote({ pitch: DRUM_PITCHES.kick, start, duration: 0.25, velocity: 110 }));
       }
-      if (step % 4 === 2) {
+      if (fill && step >= 4) {
+        // Snare roll across the back half of the bar.
+        notes.push(createNote({ pitch: DRUM_PITCHES.snare, start, duration: 0.2, velocity: 80 + Math.floor(rng() * 20) }));
+      } else if (!fill && step % 4 === 2) {
         notes.push(createNote({ pitch: DRUM_PITCHES.snare, start, duration: 0.25, velocity: 100 }));
       }
       if (rng() > 0.3) {
@@ -253,7 +314,7 @@ function generateVocalLine(spec, rng, voiceProfile) {
     if (rng() < 0.2) continue; // rest for breath
     const pitch = clampPitchToRange(scaleDegreeToPitch(root, degree, spec.mode), minMidi, maxMidi);
     notes.push(
-      createNote({ pitch, start: step, duration: 1, velocity: 80 + Math.floor(rng() * 30) })
+      createNote({ pitch, start: humanizeTiming(step, rng), duration: 1, velocity: 80 + Math.floor(rng() * 30) })
     );
   }
 
@@ -286,6 +347,7 @@ function generateComposition(spec, { seed } = {}) {
     mode: spec.mode,
     bars: spec.bars,
     tracks,
+    reverb: reverbFor(spec.genre),
   });
 }
 
@@ -294,6 +356,7 @@ module.exports = {
   scaleDegreeToPitch,
   chordProgressionFor,
   melodyWaveformFor,
+  reverbFor,
   buildChord,
   generateChordProgression,
   dynamicsCurve,
@@ -302,6 +365,7 @@ module.exports = {
   generateMelody,
   generateChordsTrack,
   generateBassline,
+  isFillBar,
   generateDrumPattern,
   generateVocalLine,
   generateComposition,
