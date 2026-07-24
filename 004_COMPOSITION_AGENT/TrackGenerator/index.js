@@ -98,11 +98,70 @@ function generateDrumPattern(spec, rng) {
   return createTrack({ name: 'drums', instrument: 'percussion', waveform: 'square', notes, gain: 0.4 });
 }
 
+function pitchHzToMidi(hz) {
+  return 69 + 12 * Math.log2(hz / 440);
+}
+
+function clampPitchToRange(pitch, minMidi, maxMidi) {
+  let clamped = pitch;
+  let guard = 0;
+  while (clamped < minMidi && guard < 20) {
+    clamped += 12;
+    guard += 1;
+  }
+  while (clamped > maxMidi && guard < 20) {
+    clamped -= 12;
+    guard += 1;
+  }
+  return clamped;
+}
+
+// Shapes a vocal-range melody. When a VoiceProfiler voice profile is
+// supplied, the range comes from the speaker's actual measured pitch
+// (see 003_AUDIO_ENGINE/VoiceProfiler) rather than a fixed default —
+// this calibrates the synth's vocal pitch range to the voice, it does
+// not clone its timbre.
+function generateVocalLine(spec, rng, voiceProfile) {
+  const root = keyToMidiRoot(spec.key, 4);
+  const stepsPerBar = 4;
+  const totalSteps = spec.bars * stepsPerBar;
+
+  let minMidi = 57; // A3 fallback
+  let maxMidi = 74; // D5 fallback
+  if (voiceProfile?.minPitchHz && voiceProfile?.maxPitchHz) {
+    minMidi = Math.round(pitchHzToMidi(voiceProfile.minPitchHz));
+    maxMidi = Math.round(pitchHzToMidi(voiceProfile.maxPitchHz));
+    if (minMidi > maxMidi) [minMidi, maxMidi] = [maxMidi, minMidi];
+    if (maxMidi - minMidi < 4) maxMidi = minMidi + 4; // guarantee a singable range
+  }
+
+  let degree = 0;
+  const notes = [];
+  for (let step = 0; step < totalSteps; step += 1) {
+    const move = Math.floor(rng() * 5) - 2;
+    degree = Math.max(-4, Math.min(11, degree + move));
+    if (rng() < 0.2) continue; // rest for breath
+    const pitch = clampPitchToRange(scaleDegreeToPitch(root, degree, spec.mode), minMidi, maxMidi);
+    notes.push(
+      createNote({ pitch, start: step, duration: 1, velocity: 80 + Math.floor(rng() * 30) })
+    );
+  }
+
+  return createTrack({ name: 'vocal', instrument: 'vocal', waveform: 'triangle', notes, gain: 0.65 });
+}
+
 function generateComposition(spec, { seed } = {}) {
   const rngSeed = seed ?? hashStringToSeed(JSON.stringify(spec));
   const rng = createRng(rngSeed);
 
   const tracks = [generateMelody(spec, rng), generateBassline(spec, rng), generateDrumPattern(spec, rng)];
+
+  // instrumental must be explicitly false to opt into a vocal line, so
+  // callers that never mention it (existing specs/tests) keep the
+  // original three-track output.
+  if (spec.instrumental === false) {
+    tracks.push(generateVocalLine(spec, rng, spec.voiceProfile));
+  }
 
   return createComposition({
     title: `${spec.genre}-${spec.mood}-${spec.key}${spec.mode === 'minor' ? 'm' : ''}`,
@@ -117,8 +176,11 @@ function generateComposition(spec, { seed } = {}) {
 module.exports = {
   keyToMidiRoot,
   scaleDegreeToPitch,
+  pitchHzToMidi,
+  clampPitchToRange,
   generateMelody,
   generateBassline,
   generateDrumPattern,
+  generateVocalLine,
   generateComposition,
 };

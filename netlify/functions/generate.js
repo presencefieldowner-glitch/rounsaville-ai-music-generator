@@ -31,7 +31,11 @@ exports.handler = async (event) => {
   try {
     const body = JSON.parse(event.body || '{}');
     const cleanPrompt = sanitizePrompt(body.prompt ?? '');
-    const spec = validateSpec(parsePrompt(cleanPrompt));
+    const spec = validateSpec({
+      ...parsePrompt(cleanPrompt),
+      instrumental: body.instrumental,
+      voiceProfile: body.voiceProfile,
+    });
 
     const { modelUsed, result: composition } = await buildRouter().route(spec);
     const { buffer, sampleRate } = renderComposition(composition);

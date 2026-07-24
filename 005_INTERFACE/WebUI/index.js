@@ -2,9 +2,21 @@
 
 const http = require('node:http');
 
-// Minimal static frontend for the ecosystem: a prompt box that talks to
-// 005_INTERFACE/REST_API and plays back the returned WAV. No build step,
-// no framework — a single self-contained HTML page.
+// Self-contained studio frontend for the ecosystem: prompt + style/BPM/
+// bars/instrumental controls, a client-side track history (localStorage,
+// since neither the local REST_API's stateless routes nor the Netlify
+// functions keep server-side history), and a voice profile recorder.
+// No build step, no framework. Talks to /api/generate and
+// /api/voice-profile — same paths locally (005_INTERFACE/REST_API) and on
+// Netlify (netlify.toml redirects /api/* to the functions directory).
+
+const GENRES = ['lofi', 'ambient', 'cinematic', 'edm', 'jazz', 'rock', 'classical', 'trap'];
+
+const VOICE_PHRASES = [
+  { id: 'low', label: 'Low hum', prompt: 'Hum a comfortable low note for 2-3 seconds.' },
+  { id: 'mid', label: 'Spoken phrase', prompt: 'Say "the quick brown fox jumps over the lazy dog" naturally.' },
+  { id: 'high', label: 'High hum', prompt: 'Hum a comfortable high note for 2-3 seconds.' },
+];
 
 function getIndexHtml({ apiBaseUrl = '' } = {}) {
   return `<!doctype html>
@@ -14,58 +26,393 @@ function getIndexHtml({ apiBaseUrl = '' } = {}) {
 <title>Rounsaville AI Music Generator</title>
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <style>
-  body { font-family: system-ui, sans-serif; max-width: 640px; margin: 3rem auto; padding: 0 1rem; }
-  textarea { width: 100%; height: 5rem; font: inherit; }
-  button { padding: 0.5rem 1rem; font: inherit; cursor: pointer; }
-  #status { color: #666; min-height: 1.2em; }
-  audio { width: 100%; margin-top: 1rem; }
-  pre { background: #f4f4f4; padding: 0.75rem; overflow: auto; }
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  body {
+    font-family: system-ui, sans-serif;
+    max-width: 720px;
+    margin: 0 auto;
+    padding: 2rem 1rem 4rem;
+    background: #0b0d12;
+    color: #e8e8ec;
+  }
+  h1 { font-size: 1.4rem; margin-bottom: 0.25rem; }
+  .subtitle { color: #9a9aa5; margin-top: 0; }
+  section {
+    background: #14161d;
+    border: 1px solid #23262f;
+    border-radius: 12px;
+    padding: 1.25rem;
+    margin: 1.25rem 0;
+  }
+  section h2 { font-size: 1rem; margin-top: 0; }
+  .disclaimer { font-size: 0.85rem; color: #9a9aa5; border-left: 3px solid #3a3f4d; padding-left: 0.75rem; }
+  label { display: block; font-size: 0.85rem; color: #b6b6c0; margin: 0.75rem 0 0.25rem; }
+  textarea, select, input[type="text"] {
+    width: 100%; font: inherit; padding: 0.5rem;
+    background: #1c1f28; color: inherit; border: 1px solid #2c303c; border-radius: 8px;
+  }
+  textarea { height: 4.5rem; resize: vertical; }
+  .row { display: flex; gap: 1rem; align-items: center; }
+  .row > * { flex: 1; }
+  input[type="range"] { width: 100%; }
+  .toggle { display: flex; align-items: center; gap: 0.5rem; margin-top: 0.75rem; }
+  .toggle input { width: auto; }
+  button {
+    padding: 0.6rem 1.1rem; font: inherit; cursor: pointer;
+    background: #3b5bdb; color: white; border: none; border-radius: 8px;
+  }
+  button.secondary { background: #262a35; color: #e8e8ec; }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  button + button { margin-left: 0.5rem; }
+  #status { color: #9a9aa5; min-height: 1.2em; margin-top: 0.5rem; }
+  audio { width: 100%; margin-top: 0.75rem; }
+  .stats { display: flex; gap: 2rem; margin: 0.5rem 0 1rem; }
+  .stats div span { display: block; }
+  .stats .label { font-size: 0.75rem; color: #9a9aa5; text-transform: uppercase; }
+  .stats .value { font-size: 1.1rem; font-weight: 600; }
+  ul.history { list-style: none; padding: 0; margin: 0; }
+  ul.history li {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 0.5rem 0; border-top: 1px solid #23262f;
+  }
+  ul.history li:first-child { border-top: none; }
+  ul.history .meta { font-size: 0.8rem; color: #9a9aa5; }
+  .phrase { border-top: 1px solid #23262f; padding: 0.75rem 0; }
+  .phrase:first-child { border-top: none; }
+  .phrase .prompt { font-size: 0.85rem; color: #b6b6c0; margin: 0.25rem 0 0.5rem; }
+  .badge { font-size: 0.75rem; padding: 0.1rem 0.5rem; border-radius: 999px; background: #1f3d2b; color: #7fd99a; }
+  .badge.pending { background: #2a2d38; color: #9a9aa5; }
+  pre { background: #1c1f28; padding: 0.75rem; overflow: auto; border-radius: 8px; font-size: 0.8rem; }
 </style>
 </head>
 <body>
 <h1>Rounsaville AI Music Generator</h1>
-<p>Describe what you want (genre, mood, key, tempo, bar count) and generate a track.</p>
-<textarea id="prompt" placeholder="e.g. an energetic edm track in A minor at 128 bpm, 16 bars"></textarea>
-<div>
-  <button id="generate">Generate</button>
-</div>
-<p id="status"></p>
-<audio id="player" controls></audio>
-<pre id="details" hidden></pre>
+<p class="subtitle">Describe a track, generate it, and optionally shape the vocal line to your own voice.</p>
+
+<section id="studio">
+  <h2>Studio</h2>
+  <label for="prompt">Prompt</label>
+  <textarea id="prompt" placeholder="e.g. an energetic edm track in A minor at 128 bpm"></textarea>
+
+  <div class="row">
+    <div>
+      <label for="style">Style</label>
+      <select id="style">${GENRES.map((g) => `<option value="${g}">${g}</option>`).join('')}</select>
+    </div>
+    <div>
+      <label for="bpm">BPM: <span id="bpmValue">120</span></label>
+      <input type="range" id="bpm" min="40" max="220" value="120" />
+    </div>
+    <div>
+      <label for="bars">Length (bars): <span id="barsValue">8</span></label>
+      <input type="range" id="bars" min="1" max="32" value="8" />
+    </div>
+  </div>
+
+  <div class="toggle">
+    <input type="checkbox" id="instrumental" checked />
+    <label for="instrumental" style="margin:0;">Instrumental (no vocal line)</label>
+  </div>
+  <div class="toggle">
+    <input type="checkbox" id="useVoiceProfile" disabled />
+    <label for="useVoiceProfile" style="margin:0;">Use my recorded voice profile for the vocal range</label>
+  </div>
+
+  <div style="margin-top:1rem;">
+    <button id="generate">Generate Track</button>
+  </div>
+  <p id="status"></p>
+  <audio id="player" controls></audio>
+</section>
+
+<section id="history">
+  <h2>Track History</h2>
+  <div class="stats">
+    <div><span class="label">System status</span><span class="value" id="systemStatus">Idle</span></div>
+    <div><span class="label">Total tracks</span><span class="value" id="totalTracks">0</span></div>
+  </div>
+  <ul class="history" id="historyList"></ul>
+  <div style="margin-top:0.75rem;">
+    <button class="secondary" id="clearHistory">Clear history</button>
+  </div>
+</section>
+
+<section id="voice">
+  <h2>Voice Profile</h2>
+  <p class="disclaimer">
+    Recording calibrates the synthesizer's vocal <em>pitch range</em> to your voice by measuring
+    it directly from the audio (autocorrelation pitch detection). This is <strong>not</strong>
+    neural voice cloning or text-to-speech in your voice &mdash; it does not reproduce your
+    timbre, only the note range the vocal line stays within. Works best in Chrome/Edge.
+  </p>
+  <div id="phrases"></div>
+  <div style="margin-top:0.75rem;">
+    <button id="analyzeVoice" disabled>Analyze Voice</button>
+    <button class="secondary" id="clearVoice">Clear voice profile</button>
+  </div>
+  <p id="voiceStatus"></p>
+  <pre id="voiceProfileOut" hidden></pre>
+</section>
+
 <script>
 (function () {
   var apiBaseUrl = ${JSON.stringify(apiBaseUrl)};
+  var VOICE_PHRASES = ${JSON.stringify(VOICE_PHRASES)};
+  var HISTORY_KEY = 'rounsaville-music:history';
+  var VOICE_KEY = 'rounsaville-music:voiceProfile';
+  var MAX_HISTORY = 5;
+
   var statusEl = document.getElementById('status');
   var playerEl = document.getElementById('player');
-  var detailsEl = document.getElementById('details');
-  var sessionId = null;
+  var systemStatusEl = document.getElementById('systemStatus');
+  var totalTracksEl = document.getElementById('totalTracks');
+  var historyListEl = document.getElementById('historyList');
+  var useVoiceProfileEl = document.getElementById('useVoiceProfile');
+  var instrumentalEl = document.getElementById('instrumental');
+  var bpmEl = document.getElementById('bpm');
+  var bpmValueEl = document.getElementById('bpmValue');
+  var barsEl = document.getElementById('bars');
+  var barsValueEl = document.getElementById('barsValue');
 
-  async function ensureSession() {
-    if (sessionId) return sessionId;
-    var res = await fetch(apiBaseUrl + '/api/sessions', { method: 'POST', body: '{}' });
-    var session = await res.json();
-    sessionId = session.id;
-    return sessionId;
+  bpmEl.addEventListener('input', function () { bpmValueEl.textContent = bpmEl.value; });
+  barsEl.addEventListener('input', function () { barsValueEl.textContent = barsEl.value; });
+
+  function loadHistory() {
+    try { return JSON.parse(localStorage.getItem(HISTORY_KEY)) || []; } catch (e) { return []; }
   }
+  function saveHistory(list) { localStorage.setItem(HISTORY_KEY, JSON.stringify(list)); }
+
+  function loadVoiceProfile() {
+    try { return JSON.parse(localStorage.getItem(VOICE_KEY)) || null; } catch (e) { return null; }
+  }
+  function saveVoiceProfile(profile) { localStorage.setItem(VOICE_KEY, JSON.stringify(profile)); }
+
+  function renderHistory() {
+    var history = loadHistory();
+    totalTracksEl.textContent = String(history.length);
+    historyListEl.innerHTML = '';
+    history.forEach(function (track) {
+      var li = document.createElement('li');
+      var left = document.createElement('div');
+      left.innerHTML = '<strong>' + track.title + '</strong><div class="meta">' +
+        track.style + ' \\u00b7 ' + track.bpm + ' bpm \\u00b7 ' + track.bars + ' bars</div>';
+      var playBtn = document.createElement('button');
+      playBtn.textContent = 'Play';
+      playBtn.className = 'secondary';
+      playBtn.addEventListener('click', function () {
+        playerEl.src = 'data:audio/wav;base64,' + track.base64Wav;
+        playerEl.play();
+      });
+      li.appendChild(left);
+      li.appendChild(playBtn);
+      historyListEl.appendChild(li);
+    });
+  }
+
+  function refreshVoiceToggle() {
+    var profile = loadVoiceProfile();
+    useVoiceProfileEl.disabled = !profile;
+    if (!profile) useVoiceProfileEl.checked = false;
+  }
+
+  document.getElementById('clearHistory').addEventListener('click', function () {
+    saveHistory([]);
+    renderHistory();
+  });
 
   document.getElementById('generate').addEventListener('click', async function () {
     var prompt = document.getElementById('prompt').value.trim();
-    if (!prompt) return;
+    var style = document.getElementById('style').value;
+    var bpm = bpmEl.value;
+    var bars = barsEl.value;
+    var instrumental = instrumentalEl.checked;
+    var fullPrompt = (prompt || ('a track in the ' + style + ' style')) +
+      ', ' + style + ' style, ' + bpm + ' bpm, ' + bars + ' bars' +
+      (instrumental ? ', instrumental' : '');
+
     statusEl.textContent = 'Generating...';
+    systemStatusEl.textContent = 'Synthesizing...';
     try {
-      var id = await ensureSession();
-      var res = await fetch(apiBaseUrl + '/api/sessions/' + id + '/generate', {
+      var payload = { prompt: fullPrompt, instrumental: instrumental, format: 'json' };
+      if (!instrumental && useVoiceProfileEl.checked) {
+        var profile = loadVoiceProfile();
+        if (profile) payload.voiceProfile = profile;
+      }
+      var res = await fetch(apiBaseUrl + '/api/generate', {
         method: 'POST',
-        body: JSON.stringify({ prompt: prompt, format: 'wav' }),
+        body: JSON.stringify(payload),
       });
-      if (!res.ok) throw new Error('generation failed: ' + res.status);
-      var blob = await res.blob();
-      playerEl.src = URL.createObjectURL(blob);
+      if (!res.ok) {
+        var errBody = await res.json().catch(function () { return {}; });
+        throw new Error(errBody.error || ('generation failed: ' + res.status));
+      }
+      var body = await res.json();
+      playerEl.src = 'data:audio/wav;base64,' + body.audio.base64Wav;
+
+      var history = loadHistory();
+      history.unshift({
+        title: body.composition.title,
+        style: style,
+        bpm: body.composition.tempo,
+        bars: body.composition.bars,
+        base64Wav: body.audio.base64Wav,
+        createdAt: Date.now(),
+      });
+      saveHistory(history.slice(0, MAX_HISTORY));
+      renderHistory();
+
       statusEl.textContent = 'Done.';
     } catch (err) {
       statusEl.textContent = 'Error: ' + err.message;
+    } finally {
+      systemStatusEl.textContent = 'Idle';
     }
   });
+
+  // --- Voice profile recording ---
+  var recordings = {}; // phraseId -> base64 WAV
+
+  function arrayBufferToBase64(buffer) {
+    var bytes = new Uint8Array(buffer);
+    var binary = '';
+    var chunkSize = 0x8000;
+    for (var i = 0; i < bytes.length; i += chunkSize) {
+      binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunkSize));
+    }
+    return btoa(binary);
+  }
+
+  function encodeWavFromAudioBuffer(audioBuffer) {
+    var samples = audioBuffer.getChannelData(0);
+    var sampleRate = audioBuffer.sampleRate;
+    var pcm = new Int16Array(samples.length);
+    for (var i = 0; i < samples.length; i++) {
+      var s = Math.max(-1, Math.min(1, samples[i]));
+      pcm[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+    }
+    var dataSize = pcm.length * 2;
+    var buffer = new ArrayBuffer(44 + dataSize);
+    var view = new DataView(buffer);
+    function writeString(offset, str) {
+      for (var j = 0; j < str.length; j++) view.setUint8(offset + j, str.charCodeAt(j));
+    }
+    writeString(0, 'RIFF');
+    view.setUint32(4, 36 + dataSize, true);
+    writeString(8, 'WAVE');
+    writeString(12, 'fmt ');
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true);
+    view.setUint16(22, 1, true);
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, sampleRate * 2, true);
+    view.setUint16(32, 2, true);
+    view.setUint16(34, 16, true);
+    writeString(36, 'data');
+    view.setUint32(40, dataSize, true);
+    for (var k = 0; k < pcm.length; k++) view.setInt16(44 + k * 2, pcm[k], true);
+    return arrayBufferToBase64(buffer);
+  }
+
+  function renderPhrases() {
+    var container = document.getElementById('phrases');
+    container.innerHTML = '';
+    VOICE_PHRASES.forEach(function (phrase) {
+      var div = document.createElement('div');
+      div.className = 'phrase';
+      var badge = recordings[phrase.id] ? '<span class="badge">recorded</span>' : '<span class="badge pending">not recorded</span>';
+      div.innerHTML = '<strong>' + phrase.label + '</strong> ' + badge +
+        '<div class="prompt">' + phrase.prompt + '</div>';
+      var btn = document.createElement('button');
+      btn.className = 'secondary';
+      btn.textContent = 'Record';
+      btn.addEventListener('click', function () { recordPhrase(phrase.id, btn); });
+      div.appendChild(btn);
+      container.appendChild(div);
+    });
+    document.getElementById('analyzeVoice').disabled = Object.keys(recordings).length === 0;
+  }
+
+  async function recordPhrase(phraseId, btn) {
+    var voiceStatusEl = document.getElementById('voiceStatus');
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      voiceStatusEl.textContent = 'Microphone recording is not supported in this browser.';
+      return;
+    }
+    try {
+      var stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      var recorder = new MediaRecorder(stream);
+      var chunks = [];
+      recorder.addEventListener('dataavailable', function (e) { if (e.data.size > 0) chunks.push(e.data); });
+
+      var stopped = new Promise(function (resolve) {
+        recorder.addEventListener('stop', resolve, { once: true });
+      });
+
+      btn.textContent = 'Recording... (3s)';
+      btn.disabled = true;
+      recorder.start();
+      await new Promise(function (resolve) { setTimeout(resolve, 3000); });
+      recorder.stop();
+      await stopped;
+      stream.getTracks().forEach(function (t) { t.stop(); });
+
+      var blob = new Blob(chunks, { type: recorder.mimeType });
+      var arrayBuffer = await blob.arrayBuffer();
+      var audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      var audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+      recordings[phraseId] = encodeWavFromAudioBuffer(audioBuffer);
+      audioCtx.close();
+
+      btn.textContent = 'Re-record';
+      btn.disabled = false;
+      renderPhrases();
+    } catch (err) {
+      voiceStatusEl.textContent = 'Recording failed: ' + err.message;
+      btn.textContent = 'Record';
+      btn.disabled = false;
+    }
+  }
+
+  document.getElementById('analyzeVoice').addEventListener('click', async function () {
+    var voiceStatusEl = document.getElementById('voiceStatus');
+    var outEl = document.getElementById('voiceProfileOut');
+    var samples = Object.keys(recordings).map(function (id) { return recordings[id]; });
+    if (samples.length === 0) return;
+
+    voiceStatusEl.textContent = 'Analyzing...';
+    try {
+      var res = await fetch(apiBaseUrl + '/api/voice-profile', {
+        method: 'POST',
+        body: JSON.stringify({ samples: samples }),
+      });
+      if (!res.ok) {
+        var errBody = await res.json().catch(function () { return {}; });
+        throw new Error(errBody.error || ('analysis failed: ' + res.status));
+      }
+      var body = await res.json();
+      saveVoiceProfile(body.voiceProfile);
+      refreshVoiceToggle();
+      outEl.hidden = false;
+      outEl.textContent = JSON.stringify(body.voiceProfile, null, 2);
+      voiceStatusEl.textContent = 'Voice profile saved.';
+    } catch (err) {
+      voiceStatusEl.textContent = 'Error: ' + err.message;
+    }
+  });
+
+  document.getElementById('clearVoice').addEventListener('click', function () {
+    recordings = {};
+    localStorage.removeItem(VOICE_KEY);
+    refreshVoiceToggle();
+    renderPhrases();
+    document.getElementById('voiceProfileOut').hidden = true;
+    document.getElementById('voiceStatus').textContent = 'Voice profile cleared.';
+  });
+
+  renderHistory();
+  refreshVoiceToggle();
+  renderPhrases();
 })();
 </script>
 </body>
@@ -92,4 +439,4 @@ function startWebUI(port = 0, options = {}) {
   });
 }
 
-module.exports = { getIndexHtml, createStaticServer, startWebUI };
+module.exports = { getIndexHtml, createStaticServer, startWebUI, GENRES, VOICE_PHRASES };

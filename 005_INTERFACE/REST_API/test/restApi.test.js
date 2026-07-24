@@ -3,6 +3,14 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { startServer } = require('../index.js');
+const { encodeWav } = require('../../../003_AUDIO_ENGINE/AudioRenderer');
+
+function sineWavBase64(frequency, seconds, sampleRate) {
+  const n = Math.round(seconds * sampleRate);
+  const samples = new Float32Array(n);
+  for (let i = 0; i < n; i += 1) samples[i] = 0.6 * Math.sin((2 * Math.PI * frequency * i) / sampleRate);
+  return encodeWav(samples, sampleRate, 1).toString('base64');
+}
 
 async function withServer(fn) {
   const { server, app } = await startServer(0);
@@ -104,6 +112,72 @@ test('guardrails reject banned content with a 400', async () => {
       method: 'POST',
       body: JSON.stringify({ prompt: 'please use this copyrighted sample' }),
     });
+    assert.equal(res.status, 400);
+  });
+});
+
+test('POST /api/generate is stateless: no session needed, returns a composition', async () => {
+  await withServer(async ({ baseUrl }) => {
+    const res = await fetch(`${baseUrl}/api/generate`, {
+      method: 'POST',
+      body: JSON.stringify({ prompt: 'a cinematic track in D minor at 100 bpm, 4 bars' }),
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.modelUsed, 'algorithmic-composer');
+    assert.ok(body.audio.base64Wav.length > 0);
+    // default (no instrumental flag) keeps the original instrumental-only tracks
+    assert.equal(body.composition.tracks.find((t) => t.name === 'vocal'), undefined);
+  });
+});
+
+test('POST /api/generate with instrumental: false adds a vocal track', async () => {
+  await withServer(async ({ baseUrl }) => {
+    const res = await fetch(`${baseUrl}/api/generate`, {
+      method: 'POST',
+      body: JSON.stringify({ prompt: 'a pop song in C major at 110 bpm, 4 bars', instrumental: false }),
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.ok(body.composition.tracks.find((t) => t.name === 'vocal'));
+  });
+});
+
+test('POST /api/generate accepts a voiceProfile and constrains the vocal range', async () => {
+  await withServer(async ({ baseUrl }) => {
+    const res = await fetch(`${baseUrl}/api/generate`, {
+      method: 'POST',
+      body: JSON.stringify({
+        prompt: 'a ballad in A minor at 90 bpm, 4 bars',
+        instrumental: false,
+        voiceProfile: { minPitchHz: 150, maxPitchHz: 260, averagePitchHz: 200 },
+      }),
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    const vocal = body.composition.tracks.find((t) => t.name === 'vocal');
+    assert.ok(vocal);
+    assert.ok(vocal.notes.length > 0);
+  });
+});
+
+test('POST /api/voice-profile analyzes a recorded sample and returns a pitch range', async () => {
+  await withServer(async ({ baseUrl }) => {
+    const sample = sineWavBase64(180, 1.0, 22050);
+    const res = await fetch(`${baseUrl}/api/voice-profile`, {
+      method: 'POST',
+      body: JSON.stringify({ samples: [sample] }),
+    });
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.ok(Math.abs(body.voiceProfile.averagePitchHz - 180) / 180 < 0.15);
+    assert.equal(body.voiceProfile.sampleCount, 1);
+  });
+});
+
+test('POST /api/voice-profile with no samples returns 400', async () => {
+  await withServer(async ({ baseUrl }) => {
+    const res = await fetch(`${baseUrl}/api/voice-profile`, { method: 'POST', body: '{}' });
     assert.equal(res.status, 400);
   });
 });

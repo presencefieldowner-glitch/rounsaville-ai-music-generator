@@ -2,7 +2,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { renderComposition, encodeWav, floatTo16BitPCM } = require('../index.js');
+const { renderComposition, encodeWav, decodeWav, floatTo16BitPCM } = require('../index.js');
 
 function makeComposition() {
   return {
@@ -45,4 +45,48 @@ test('encodeWav writes a valid RIFF/WAVE header', () => {
   assert.equal(wav.readUInt32LE(24), 44100);
   assert.equal(wav.readUInt16LE(34), 16); // bits per sample
   assert.equal(wav.length, 44 + 4 * 2);
+});
+
+test('decodeWav round-trips encodeWav within 16-bit quantization error', () => {
+  const original = new Float32Array(200);
+  for (let i = 0; i < original.length; i += 1) original[i] = Math.sin((2 * Math.PI * 5 * i) / original.length) * 0.7;
+
+  const wav = encodeWav(original, 22050, 1);
+  const decoded = decodeWav(wav);
+
+  assert.equal(decoded.sampleRate, 22050);
+  assert.equal(decoded.numChannels, 1);
+  assert.equal(decoded.samples.length, original.length);
+  for (let i = 0; i < original.length; i += 1) {
+    assert.ok(Math.abs(decoded.samples[i] - original[i]) < 0.001);
+  }
+});
+
+test('decodeWav rejects a non-RIFF buffer', () => {
+  assert.throws(() => decodeWav(Buffer.from('not a wav file')));
+});
+
+test('decodeWav downmixes stereo to mono', () => {
+  const stereo = Buffer.alloc(44 + 4 * 4); // 4 stereo frames, 16-bit
+  stereo.write('RIFF', 0, 'ascii');
+  stereo.writeUInt32LE(36 + 4 * 4, 4);
+  stereo.write('WAVE', 8, 'ascii');
+  stereo.write('fmt ', 12, 'ascii');
+  stereo.writeUInt32LE(16, 16);
+  stereo.writeUInt16LE(1, 20);
+  stereo.writeUInt16LE(2, 22); // stereo
+  stereo.writeUInt32LE(22050, 24);
+  stereo.writeUInt32LE(22050 * 4, 28);
+  stereo.writeUInt16LE(4, 32);
+  stereo.writeUInt16LE(16, 34);
+  stereo.write('data', 36, 'ascii');
+  stereo.writeUInt32LE(4 * 4, 40);
+  // one frame: left = max, right = 0 -> mono average should be ~0.5
+  stereo.writeInt16LE(32767, 44);
+  stereo.writeInt16LE(0, 46);
+
+  const decoded = decodeWav(stereo);
+  assert.equal(decoded.numChannels, 2);
+  assert.equal(decoded.samples.length, 4);
+  assert.ok(Math.abs(decoded.samples[0] - 0.5) < 0.01);
 });

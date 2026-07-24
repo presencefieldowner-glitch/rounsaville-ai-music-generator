@@ -72,4 +72,63 @@ function encodeWav(float32Samples, sampleRate, numChannels = 1) {
   return buffer;
 }
 
-module.exports = { renderComposition, encodeWav, floatTo16BitPCM, secondsPerBeat };
+// Parses a RIFF/WAVE buffer (8 or 16-bit PCM) into mono Float32 samples in
+// [-1, 1], walking chunks rather than assuming a fixed 44-byte header since
+// browser-produced WAV files can include extra chunks. Multi-channel audio
+// is downmixed to mono by averaging.
+function decodeWav(buffer) {
+  if (buffer.toString('ascii', 0, 4) !== 'RIFF' || buffer.toString('ascii', 8, 12) !== 'WAVE') {
+    throw new Error('not a RIFF/WAVE buffer');
+  }
+
+  let fmt = null;
+  let dataStart = -1;
+  let dataSize = 0;
+  let offset = 12;
+
+  while (offset + 8 <= buffer.length) {
+    const chunkId = buffer.toString('ascii', offset, offset + 4);
+    const chunkSize = buffer.readUInt32LE(offset + 4);
+    const bodyStart = offset + 8;
+
+    if (chunkId === 'fmt ') {
+      fmt = {
+        audioFormat: buffer.readUInt16LE(bodyStart),
+        numChannels: buffer.readUInt16LE(bodyStart + 2),
+        sampleRate: buffer.readUInt32LE(bodyStart + 4),
+        bitsPerSample: buffer.readUInt16LE(bodyStart + 14),
+      };
+    } else if (chunkId === 'data') {
+      dataStart = bodyStart;
+      dataSize = chunkSize;
+    }
+
+    offset = bodyStart + chunkSize + (chunkSize % 2); // chunks are word-aligned
+  }
+
+  if (!fmt || dataStart === -1) throw new Error('WAV buffer missing fmt or data chunk');
+  if (fmt.bitsPerSample !== 16 && fmt.bitsPerSample !== 8) {
+    throw new Error(`unsupported bits per sample: ${fmt.bitsPerSample}`);
+  }
+
+  const bytesPerSample = fmt.bitsPerSample / 8;
+  const frameCount = Math.floor(dataSize / bytesPerSample / fmt.numChannels);
+  const mono = new Float32Array(frameCount);
+
+  for (let i = 0; i < frameCount; i += 1) {
+    let sum = 0;
+    for (let ch = 0; ch < fmt.numChannels; ch += 1) {
+      const sampleOffset = dataStart + (i * fmt.numChannels + ch) * bytesPerSample;
+      if (fmt.bitsPerSample === 16) {
+        sum += buffer.readInt16LE(sampleOffset) / 32768;
+      } else {
+        sum += (buffer.readUInt8(sampleOffset) - 128) / 128;
+      }
+    }
+    mono[i] = sum / fmt.numChannels;
+  }
+
+  return { samples: mono, sampleRate: fmt.sampleRate, numChannels: fmt.numChannels };
+}
+
+module.exports = { renderComposition, encodeWav, decodeWav, floatTo16BitPCM, secondsPerBeat };

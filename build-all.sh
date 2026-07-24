@@ -342,6 +342,7 @@ main() {
     "003_AUDIO_ENGINE/SynthEngine"
     "003_AUDIO_ENGINE/AudioRenderer"
     "003_AUDIO_ENGINE/MixMaster"
+    "003_AUDIO_ENGINE/VoiceProfiler"
   )
   for module in "${AudioLayer[@]}"; do run_module "$module" || true; done
 
