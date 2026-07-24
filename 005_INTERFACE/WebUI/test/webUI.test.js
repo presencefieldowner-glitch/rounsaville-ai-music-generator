@@ -25,6 +25,15 @@ test('getIndexHtml includes the voice-cloning disclaimer and calls /api/generate
   assert.equal(VOICE_PHRASES.length, 3);
 });
 
+test('getIndexHtml includes seed/regenerate, rating, and download controls', () => {
+  const html = getIndexHtml();
+  assert.match(html, /id="regenerate"/);
+  assert.match(html, /id="seedValue"/);
+  assert.match(html, /id="downloadLink"/);
+  assert.match(html, /rate-btn/); // thumbs up/down rating buttons
+  assert.match(html, /payload\.seed = seedOverride/);
+});
+
 test('getIndexHtml produces well-formed, parseable script content (balanced braces/quotes)', () => {
   const html = getIndexHtml({ apiBaseUrl: '' });
   const scriptMatch = html.match(/<script>([\s\S]*)<\/script>/);
@@ -46,6 +55,35 @@ test('startWebUI serves the page at / and 404s elsewhere', async () => {
 
     const missing = await fetch(`http://127.0.0.1:${port}/does-not-exist`);
     assert.equal(missing.status, 404);
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+  }
+});
+
+test('apiProxyTarget forwards /api/* requests to a real backend (fixes plain local dev, two separate ports)', async () => {
+  const { startServer } = require('../../REST_API');
+  const { server: apiServer } = await startServer(0);
+  const apiPort = apiServer.address().port;
+
+  const uiServer = await startWebUI(0, { apiProxyTarget: `http://127.0.0.1:${apiPort}` });
+  const uiPort = uiServer.address().port;
+
+  try {
+    const res = await fetch(`http://127.0.0.1:${uiPort}/api/health`);
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    assert.equal(body.status, 'ok');
+  } finally {
+    await new Promise((resolve) => uiServer.close(resolve));
+    await new Promise((resolve) => apiServer.close(resolve));
+  }
+});
+
+test('without apiProxyTarget, /api/* still 404s on the WebUI server (documents the gap it fixes)', async () => {
+  const server = await startWebUI(0);
+  try {
+    const res = await fetch(`http://127.0.0.1:${server.address().port}/api/health`);
+    assert.equal(res.status, 404);
   } finally {
     await new Promise((resolve) => server.close(resolve));
   }

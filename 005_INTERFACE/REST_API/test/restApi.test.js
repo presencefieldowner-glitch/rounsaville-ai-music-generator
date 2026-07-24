@@ -267,3 +267,54 @@ test('rate limiting does not apply to health checks', async () => {
     { rateLimiter: createRateLimiter({ capacity: 1, refillPerSecond: 0.001 }) }
   );
 });
+
+test('POST /api/generate always reports the seed it used, even when the caller does not supply one', async () => {
+  await withServer(async ({ baseUrl }) => {
+    const res = await fetch(`${baseUrl}/api/generate`, {
+      method: 'POST',
+      body: JSON.stringify({ prompt: 'a lofi track' }),
+    });
+    const body = await res.json();
+    assert.ok(Number.isFinite(body.seed));
+  });
+});
+
+test('POST /api/generate with the same seed reproduces the exact same composition', async () => {
+  await withServer(async ({ baseUrl }) => {
+    const request = () =>
+      fetch(`${baseUrl}/api/generate`, {
+        method: 'POST',
+        body: JSON.stringify({ prompt: 'an ambient track in D minor at 90 bpm, 4 bars', seed: 12345 }),
+      }).then((r) => r.json());
+
+    const first = await request();
+    const second = await request();
+    assert.equal(first.seed, 12345);
+    assert.equal(second.seed, 12345);
+    assert.deepEqual(first.composition, second.composition);
+  });
+});
+
+test('POST /api/generate with different seeds produces different compositions for the same prompt', async () => {
+  await withServer(async ({ baseUrl }) => {
+    const request = (seed) =>
+      fetch(`${baseUrl}/api/generate`, {
+        method: 'POST',
+        body: JSON.stringify({ prompt: 'an ambient track in D minor at 90 bpm, 4 bars', seed }),
+      }).then((r) => r.json());
+
+    const a = await request(1);
+    const b = await request(2);
+    assert.notDeepEqual(a.composition.tracks[0].notes, b.composition.tracks[0].notes);
+  });
+});
+
+test('POST /api/generate with format=wav reports the seed via the X-Generation-Seed header', async () => {
+  await withServer(async ({ baseUrl }) => {
+    const res = await fetch(`${baseUrl}/api/generate`, {
+      method: 'POST',
+      body: JSON.stringify({ prompt: 'a rock track', seed: 999, format: 'wav' }),
+    });
+    assert.equal(res.headers.get('x-generation-seed'), '999');
+  });
+});

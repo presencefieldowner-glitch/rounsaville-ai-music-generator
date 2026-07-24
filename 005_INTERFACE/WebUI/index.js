@@ -78,6 +78,10 @@ function getIndexHtml({ apiBaseUrl = '' } = {}) {
   }
   ul.history li:first-child { border-top: none; }
   ul.history .meta { font-size: 0.8rem; color: #9a9aa5; }
+  ul.history .actions { display: flex; align-items: center; gap: 0.4rem; }
+  .rate-btn { background: none; border: none; padding: 0.2rem; font-size: 1rem; cursor: pointer; opacity: 0.4; }
+  .rate-btn.active { opacity: 1; }
+  #downloadLink { color: #8aa4ff; }
   .phrase { border-top: 1px solid #23262f; padding: 0.75rem 0; }
   .phrase:first-child { border-top: none; }
   .phrase .prompt { font-size: 0.85rem; color: #b6b6c0; margin: 0.25rem 0 0.5rem; }
@@ -121,9 +125,14 @@ function getIndexHtml({ apiBaseUrl = '' } = {}) {
 
   <div style="margin-top:1rem;">
     <button id="generate">Generate Track</button>
+    <button class="secondary" id="regenerate" disabled title="Regenerate the exact same track from its seed">Regenerate (same seed)</button>
   </div>
   <p id="status"></p>
   <audio id="player" controls></audio>
+  <div id="playerActions" hidden style="margin-top:0.5rem;">
+    <a id="downloadLink" download="track.wav">Download WAV</a>
+    <span style="margin-left:1rem; font-size:0.8rem; color:#9a9aa5;">Seed: <span id="seedValue"></span></span>
+  </div>
 </section>
 
 <section id="history">
@@ -161,7 +170,7 @@ function getIndexHtml({ apiBaseUrl = '' } = {}) {
   var VOICE_PHRASES = ${JSON.stringify(VOICE_PHRASES)};
   var HISTORY_KEY = 'rounsaville-music:history';
   var VOICE_KEY = 'rounsaville-music:voiceProfile';
-  var MAX_HISTORY = 5;
+  var MAX_HISTORY = 20; // history entries are now small metadata (no audio), so this can be generous
 
   var statusEl = document.getElementById('status');
   var playerEl = document.getElementById('player');
@@ -174,6 +183,11 @@ function getIndexHtml({ apiBaseUrl = '' } = {}) {
   var bpmValueEl = document.getElementById('bpmValue');
   var barsEl = document.getElementById('bars');
   var barsValueEl = document.getElementById('barsValue');
+  var regenerateEl = document.getElementById('regenerate');
+  var playerActionsEl = document.getElementById('playerActions');
+  var downloadLinkEl = document.getElementById('downloadLink');
+  var seedValueEl = document.getElementById('seedValue');
+  var lastSeed = null;
 
   bpmEl.addEventListener('input', function () { bpmValueEl.textContent = bpmEl.value; });
   barsEl.addEventListener('input', function () { barsValueEl.textContent = barsEl.value; });
@@ -188,6 +202,48 @@ function getIndexHtml({ apiBaseUrl = '' } = {}) {
   }
   function saveVoiceProfile(profile) { localStorage.setItem(VOICE_KEY, JSON.stringify(profile)); }
 
+  // Generation is deterministic given the same request + seed, so history
+  // only needs to remember the *recipe* (prompt/instrumental/voiceProfile
+  // + seed), not the rendered audio — storing every track's full WAV
+  // blew the localStorage quota after just a couple of tracks once the
+  // renderer went stereo. Re-fetching on Play costs a network round trip
+  // but reproduces the exact same audio.
+  function playAudioBase64(base64Wav, meta) {
+    playerEl.src = 'data:audio/wav;base64,' + base64Wav;
+    playerEl.play();
+    lastSeed = meta.seed;
+    playerActionsEl.hidden = false;
+    downloadLinkEl.href = 'data:audio/wav;base64,' + base64Wav;
+    downloadLinkEl.download = meta.title + '.wav';
+    seedValueEl.textContent = String(meta.seed);
+    regenerateEl.disabled = false;
+  }
+
+  async function playFromHistory(entry) {
+    statusEl.textContent = 'Loading...';
+    try {
+      var res = await fetch(apiBaseUrl + '/api/generate', {
+        method: 'POST',
+        body: JSON.stringify(Object.assign({}, entry.payload, { seed: entry.seed, format: 'json' })),
+      });
+      if (!res.ok) throw new Error('failed to regenerate track (status ' + res.status + ')');
+      var body = await res.json();
+      playAudioBase64(body.audio.base64Wav, { title: entry.title, seed: entry.seed });
+      statusEl.textContent = 'Done.';
+    } catch (err) {
+      statusEl.textContent = 'Error: ' + err.message;
+    }
+  }
+
+  function setRating(trackId, rating) {
+    var history = loadHistory();
+    history.forEach(function (t) {
+      if (t.id === trackId) t.rating = t.rating === rating ? null : rating; // click again to clear
+    });
+    saveHistory(history);
+    renderHistory();
+  }
+
   function renderHistory() {
     var history = loadHistory();
     totalTracksEl.textContent = String(history.length);
@@ -196,16 +252,33 @@ function getIndexHtml({ apiBaseUrl = '' } = {}) {
       var li = document.createElement('li');
       var left = document.createElement('div');
       left.innerHTML = '<strong>' + track.title + '</strong><div class="meta">' +
-        track.style + ' \\u00b7 ' + track.bpm + ' bpm \\u00b7 ' + track.bars + ' bars</div>';
+        track.style + ' \\u00b7 ' + track.bpm + ' bpm \\u00b7 ' + track.bars + ' bars \\u00b7 seed ' + track.seed + '</div>';
+
+      var actions = document.createElement('div');
+      actions.className = 'actions';
+
+      var upBtn = document.createElement('button');
+      upBtn.className = 'rate-btn' + (track.rating === 'up' ? ' active' : '');
+      upBtn.textContent = '\\ud83d\\udc4d';
+      upBtn.title = 'Good track';
+      upBtn.addEventListener('click', function () { setRating(track.id, 'up'); });
+
+      var downBtn = document.createElement('button');
+      downBtn.className = 'rate-btn' + (track.rating === 'down' ? ' active' : '');
+      downBtn.textContent = '\\ud83d\\udc4e';
+      downBtn.title = 'Not great';
+      downBtn.addEventListener('click', function () { setRating(track.id, 'down'); });
+
       var playBtn = document.createElement('button');
       playBtn.textContent = 'Play';
       playBtn.className = 'secondary';
-      playBtn.addEventListener('click', function () {
-        playerEl.src = 'data:audio/wav;base64,' + track.base64Wav;
-        playerEl.play();
-      });
+      playBtn.addEventListener('click', function () { playFromHistory(track); });
+
+      actions.appendChild(upBtn);
+      actions.appendChild(downBtn);
+      actions.appendChild(playBtn);
       li.appendChild(left);
-      li.appendChild(playBtn);
+      li.appendChild(actions);
       historyListEl.appendChild(li);
     });
   }
@@ -221,7 +294,7 @@ function getIndexHtml({ apiBaseUrl = '' } = {}) {
     renderHistory();
   });
 
-  document.getElementById('generate').addEventListener('click', async function () {
+  async function runGeneration(seedOverride) {
     var prompt = document.getElementById('prompt').value.trim();
     var style = document.getElementById('style').value;
     var bpm = bpmEl.value;
@@ -231,10 +304,11 @@ function getIndexHtml({ apiBaseUrl = '' } = {}) {
       ', ' + style + ' style, ' + bpm + ' bpm, ' + bars + ' bars' +
       (instrumental ? ', instrumental' : '');
 
-    statusEl.textContent = 'Generating...';
+    statusEl.textContent = seedOverride != null ? 'Regenerating...' : 'Generating...';
     systemStatusEl.textContent = 'Synthesizing...';
     try {
       var payload = { prompt: fullPrompt, instrumental: instrumental, format: 'json' };
+      if (seedOverride != null) payload.seed = seedOverride;
       if (!instrumental && useVoiceProfileEl.checked) {
         var profile = loadVoiceProfile();
         if (profile) payload.voiceProfile = profile;
@@ -248,17 +322,21 @@ function getIndexHtml({ apiBaseUrl = '' } = {}) {
         throw new Error(errBody.error || ('generation failed: ' + res.status));
       }
       var body = await res.json();
-      playerEl.src = 'data:audio/wav;base64,' + body.audio.base64Wav;
+      playAudioBase64(body.audio.base64Wav, { title: body.composition.title, seed: body.seed });
 
-      var history = loadHistory();
-      history.unshift({
+      var historyEntry = {
+        id: Date.now().toString(36) + Math.random().toString(36).slice(2, 8),
         title: body.composition.title,
         style: style,
         bpm: body.composition.tempo,
         bars: body.composition.bars,
-        base64Wav: body.audio.base64Wav,
+        seed: body.seed,
+        payload: { prompt: fullPrompt, instrumental: instrumental, voiceProfile: payload.voiceProfile },
+        rating: null,
         createdAt: Date.now(),
-      });
+      };
+      var history = loadHistory();
+      history.unshift(historyEntry);
       saveHistory(history.slice(0, MAX_HISTORY));
       renderHistory();
 
@@ -268,6 +346,11 @@ function getIndexHtml({ apiBaseUrl = '' } = {}) {
     } finally {
       systemStatusEl.textContent = 'Idle';
     }
+  }
+
+  document.getElementById('generate').addEventListener('click', function () { runGeneration(null); });
+  regenerateEl.addEventListener('click', function () {
+    if (lastSeed != null) runGeneration(lastSeed);
   });
 
   // --- Voice profile recording ---
@@ -419,13 +502,45 @@ function getIndexHtml({ apiBaseUrl = '' } = {}) {
 </html>`;
 }
 
-function createStaticServer({ apiBaseUrl = '' } = {}) {
+// In production this page is served from the same origin as /api/* — on
+// Netlify via netlify.toml's redirect, and in principle behind any reverse
+// proxy that unifies the two. For plain local dev, where WebUI and
+// REST_API are two separate http.Server instances on two separate ports,
+// the page's own relative /api/* fetches would otherwise 404 against this
+// server. apiProxyTarget (e.g. "http://127.0.0.1:4000") makes this server
+// forward /api/* requests to a real REST_API instance so `npm start`-style
+// local usage works without any extra setup.
+function proxyApiRequest(req, res, target) {
+  const targetUrl = new URL(req.url, target);
+  const proxyReq = http.request(
+    targetUrl,
+    { method: req.method, headers: req.headers },
+    (proxyRes) => {
+      res.writeHead(proxyRes.statusCode, proxyRes.headers);
+      proxyRes.pipe(res);
+    }
+  );
+  proxyReq.on('error', () => {
+    res.writeHead(502, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'upstream API unreachable' }));
+  });
+  req.pipe(proxyReq);
+}
+
+function createStaticServer({ apiBaseUrl = '', apiProxyTarget = null } = {}) {
   return http.createServer((req, res) => {
     const url = new URL(req.url, 'http://localhost');
+    if (apiProxyTarget && url.pathname.startsWith('/api/')) {
+      return proxyApiRequest(req, res, apiProxyTarget);
+    }
     if (req.method === 'GET' && (url.pathname === '/' || url.pathname === '/index.html')) {
       const html = getIndexHtml({ apiBaseUrl });
       res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Content-Length': Buffer.byteLength(html) });
       return res.end(html);
+    }
+    if (req.method === 'GET' && url.pathname === '/favicon.ico') {
+      res.writeHead(204);
+      return res.end();
     }
     res.writeHead(404, { 'Content-Type': 'text/plain' });
     res.end('not found');

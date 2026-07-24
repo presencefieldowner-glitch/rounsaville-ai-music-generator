@@ -49,15 +49,27 @@ function sendJson(res, status, body) {
 
 function defaultModelRouter() {
   const router = createModelRouter();
-  router.register('algorithmic-composer', async (spec) => generateComposition(spec), { priority: 10 });
+  // spec.seed rides along on the spec object (same pattern as
+  // instrumental/voiceProfile) so ModelRouter's single-argument interface
+  // doesn't need to change; generateComposition falls back to a fresh
+  // random seed when it's absent.
+  router.register('algorithmic-composer', async (spec) => generateComposition(spec, { seed: spec.seed }), {
+    priority: 10,
+  });
   return router;
 }
 
+const MAX_SEED = 2 ** 31 - 1;
+
 // Shared by the session-based /generate and the stateless /api/generate:
 // prompt text -> sanitized spec -> composition -> rendered/mastered WAV.
+// Every generation has a seed — either the caller's (for "regenerate the
+// same track") or a freshly random one — and it's always reported back so
+// the caller can capture it for later.
 async function runGeneration(body, modelRouter) {
   const cleanPrompt = sanitizePrompt(body.prompt ?? '');
   const parsedSpec = parsePrompt(cleanPrompt);
+  const seed = Number.isFinite(body.seed) ? Math.floor(body.seed) & MAX_SEED : Math.floor(Math.random() * MAX_SEED);
   // An explicit body.instrumental (from a UI toggle) wins; otherwise fall
   // back to whatever the prompt text itself said (see PromptEngine's
   // detectInstrumental), which can also be undefined.
@@ -65,6 +77,7 @@ async function runGeneration(body, modelRouter) {
     ...parsedSpec,
     instrumental: body.instrumental ?? parsedSpec.instrumental,
     voiceProfile: body.voiceProfile,
+    seed,
   });
 
   const { modelUsed, result: composition } = await modelRouter.route(spec);
@@ -74,17 +87,22 @@ async function runGeneration(body, modelRouter) {
   const mastered = applyLimiterStereo(normalized.left, normalized.right);
   const wav = encodeWav(interleaveStereo(mastered.left, mastered.right), sampleRate, 2);
 
-  return { cleanPrompt, spec, modelUsed, composition, sampleRate, wav };
+  return { cleanPrompt, spec, modelUsed, composition, sampleRate, wav, seed };
 }
 
 function sendGenerationResult(res, body, result) {
   if (body.format === 'wav') {
-    res.writeHead(200, { 'Content-Type': 'audio/wav', 'Content-Length': result.wav.length });
+    res.writeHead(200, {
+      'Content-Type': 'audio/wav',
+      'Content-Length': result.wav.length,
+      'X-Generation-Seed': String(result.seed),
+    });
     return res.end(result.wav);
   }
   sendJson(res, 200, {
     modelUsed: result.modelUsed,
     composition: result.composition,
+    seed: result.seed,
     audio: { sampleRate: result.sampleRate, base64Wav: result.wav.toString('base64') },
   });
 }
