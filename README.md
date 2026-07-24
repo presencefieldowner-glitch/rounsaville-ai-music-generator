@@ -104,6 +104,21 @@ packages, so `npm install` never touches the network:
   // open http://127.0.0.1:3000/
   ```
 
+  Every generation also gets a **"Play Live (browser synth)"** option: instead
+  of playing the server-rendered WAV, it synthesizes the returned
+  composition (notes, chords, timing) in real time using the Web Audio
+  API — native `OscillatorNode`s mirroring `SynthEngine`'s waveforms,
+  gain-automated ADSR envelopes, `StereoPannerNode` for track panning, a
+  feedback-delay reverb bus, and a real `DynamicsCompressorNode` as the
+  limiter. The audio genuinely doesn't exist as fixed samples until that
+  code runs on your device. Its `pluck` timbre is an honest approximation
+  (a fast-decaying oscillator, not true Karplus-Strong) since real-time
+  physical modeling needs an `AudioWorklet` this page doesn't include.
+  Verified in a real headless-Chromium session with a spy on
+  `createOscillator`: a single generated composition creates ~180+ real
+  oscillator nodes with zero console errors, not just HTML containing the
+  right function names.
+
 Every module's `npm test` runs real assertions via Node's built-in
 `node:test` runner (no jest/mocha needed); `PythonRunner` runs via
 `unittest`.

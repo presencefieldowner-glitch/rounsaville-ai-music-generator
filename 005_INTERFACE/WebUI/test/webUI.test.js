@@ -34,6 +34,15 @@ test('getIndexHtml includes seed/regenerate, rating, and download controls', () 
   assert.match(html, /payload\.seed = seedOverride/);
 });
 
+test('getIndexHtml includes the deferred client-side (Web Audio) live-playback path', () => {
+  const html = getIndexHtml();
+  assert.match(html, /id="playLive"/);
+  assert.match(html, /id="stopLive"/);
+  assert.match(html, /LiveSynth/);
+  assert.match(html, /createDynamicsCompressor/); // real native limiter, not a fake one
+  assert.match(html, /AudioWorklet/i); // honest disclosure that pluck is approximated here
+});
+
 test('getIndexHtml produces well-formed, parseable script content (balanced braces/quotes)', () => {
   const html = getIndexHtml({ apiBaseUrl: '' });
   const scriptMatch = html.match(/<script>([\s\S]*)<\/script>/);

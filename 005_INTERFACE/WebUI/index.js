@@ -132,7 +132,16 @@ function getIndexHtml({ apiBaseUrl = '' } = {}) {
   <div id="playerActions" hidden style="margin-top:0.5rem;">
     <a id="downloadLink" download="track.wav">Download WAV</a>
     <span style="margin-left:1rem; font-size:0.8rem; color:#9a9aa5;">Seed: <span id="seedValue"></span></span>
+    <button class="secondary" id="playLive" style="margin-left:1rem;" title="Synthesize this composition live in the browser instead of playing the server-rendered file">Play Live (browser synth)</button>
+    <button class="secondary" id="stopLive" hidden>Stop</button>
   </div>
+  <p class="disclaimer" style="margin-top:0.75rem;">
+    "Play Live" doesn't play the WAV above &mdash; it synthesizes the composition (notes, chords,
+    timing) directly in your browser via the Web Audio API, in real time, at the moment you click
+    play. The audio genuinely isn't fixed until then. Its <code>pluck</code> timbre is an
+    approximation (a fast-decaying oscillator) of the server's real Karplus-Strong physical
+    modeling, since that needs an AudioWorklet this page doesn't include.
+  </p>
 </section>
 
 <section id="history">
@@ -188,6 +197,7 @@ function getIndexHtml({ apiBaseUrl = '' } = {}) {
   var downloadLinkEl = document.getElementById('downloadLink');
   var seedValueEl = document.getElementById('seedValue');
   var lastSeed = null;
+  var lastComposition = null;
 
   bpmEl.addEventListener('input', function () { bpmValueEl.textContent = bpmEl.value; });
   barsEl.addEventListener('input', function () { barsValueEl.textContent = barsEl.value; });
@@ -209,14 +219,17 @@ function getIndexHtml({ apiBaseUrl = '' } = {}) {
   // renderer went stereo. Re-fetching on Play costs a network round trip
   // but reproduces the exact same audio.
   function playAudioBase64(base64Wav, meta) {
+    LiveSynth.stop();
     playerEl.src = 'data:audio/wav;base64,' + base64Wav;
     playerEl.play();
     lastSeed = meta.seed;
+    lastComposition = meta.composition || null;
     playerActionsEl.hidden = false;
     downloadLinkEl.href = 'data:audio/wav;base64,' + base64Wav;
     downloadLinkEl.download = meta.title + '.wav';
     seedValueEl.textContent = String(meta.seed);
     regenerateEl.disabled = false;
+    document.getElementById('playLive').disabled = !lastComposition;
   }
 
   async function playFromHistory(entry) {
@@ -228,7 +241,7 @@ function getIndexHtml({ apiBaseUrl = '' } = {}) {
       });
       if (!res.ok) throw new Error('failed to regenerate track (status ' + res.status + ')');
       var body = await res.json();
-      playAudioBase64(body.audio.base64Wav, { title: entry.title, seed: entry.seed });
+      playAudioBase64(body.audio.base64Wav, { title: entry.title, seed: entry.seed, composition: body.composition });
       statusEl.textContent = 'Done.';
     } catch (err) {
       statusEl.textContent = 'Error: ' + err.message;
@@ -322,7 +335,7 @@ function getIndexHtml({ apiBaseUrl = '' } = {}) {
         throw new Error(errBody.error || ('generation failed: ' + res.status));
       }
       var body = await res.json();
-      playAudioBase64(body.audio.base64Wav, { title: body.composition.title, seed: body.seed });
+      playAudioBase64(body.audio.base64Wav, { title: body.composition.title, seed: body.seed, composition: body.composition });
 
       var historyEntry = {
         id: Date.now().toString(36) + Math.random().toString(36).slice(2, 8),
@@ -491,6 +504,163 @@ function getIndexHtml({ apiBaseUrl = '' } = {}) {
     renderPhrases();
     document.getElementById('voiceProfileOut').hidden = true;
     document.getElementById('voiceStatus').textContent = 'Voice profile cleared.';
+  });
+
+  // --- Deferred/parametric client-side rendering ---
+  // Instead of playing the server-rendered WAV, synthesizes the
+  // composition (notes/chords/timing) live in the browser via the Web
+  // Audio API, using native oscillators/gain-automation/delay nodes that
+  // mirror 003_AUDIO_ENGINE/SynthEngine's real waveforms and ADSR shape.
+  // The audio genuinely doesn't exist as fixed samples until this runs.
+  var LiveSynth = (function () {
+    var audioCtx = null;
+    var activeNodes = [];
+
+    function midiToFrequency(midi) {
+      return 440 * Math.pow(2, (midi - 69) / 12);
+    }
+
+    function scheduleNote(ctx, trackGain, waveform, note, beatSeconds, startTime) {
+      var frequency = midiToFrequency(note.pitch);
+      var duration = Math.max(0.02, note.duration * beatSeconds);
+      var amplitude = (note.velocity || 100) / 127;
+      var noteStart = startTime + note.start * beatSeconds;
+      var noteEnd = noteStart + duration;
+
+      var envelope = ctx.createGain();
+      envelope.gain.setValueAtTime(0, noteStart);
+      envelope.connect(trackGain);
+
+      var oscillators = [];
+
+      if (waveform === 'pad') {
+        [-7, 0, 7].forEach(function (cents) {
+          var osc = ctx.createOscillator();
+          osc.type = 'sawtooth';
+          osc.frequency.setValueAtTime(frequency * Math.pow(2, cents / 1200), noteStart);
+          osc.connect(envelope);
+          oscillators.push(osc);
+        });
+        var padPeak = amplitude / 3;
+        var padSustain = padPeak * 0.85;
+        envelope.gain.linearRampToValueAtTime(padPeak, noteStart + 0.15);
+        envelope.gain.linearRampToValueAtTime(padSustain, noteStart + 0.25);
+        envelope.gain.setValueAtTime(padSustain, Math.max(noteStart + 0.25, noteEnd - 0.3));
+        envelope.gain.linearRampToValueAtTime(0.0001, noteEnd);
+      } else if (waveform === 'pluck') {
+        // Approximation of the server's Karplus-Strong physical modeling:
+        // a fast-decaying sawtooth. Real-time physical modeling would
+        // need an AudioWorklet, which this page doesn't include.
+        var pluckOsc = ctx.createOscillator();
+        pluckOsc.type = 'sawtooth';
+        pluckOsc.frequency.setValueAtTime(frequency, noteStart);
+        pluckOsc.connect(envelope);
+        oscillators.push(pluckOsc);
+        envelope.gain.setValueAtTime(amplitude, noteStart);
+        envelope.gain.exponentialRampToValueAtTime(Math.max(0.0001, amplitude * 0.01), noteEnd);
+      } else {
+        var oscType = waveform === 'saw' ? 'sawtooth' : ['sine', 'square', 'triangle'].indexOf(waveform) >= 0 ? waveform : 'sine';
+        var osc = ctx.createOscillator();
+        osc.type = oscType;
+        osc.frequency.setValueAtTime(frequency, noteStart);
+        osc.connect(envelope);
+        oscillators.push(osc);
+        var sustain = amplitude * 0.8;
+        envelope.gain.linearRampToValueAtTime(amplitude, noteStart + 0.01);
+        envelope.gain.linearRampToValueAtTime(sustain, noteStart + 0.06);
+        envelope.gain.setValueAtTime(sustain, Math.max(noteStart + 0.06, noteEnd - 0.08));
+        envelope.gain.linearRampToValueAtTime(0.0001, noteEnd);
+      }
+
+      oscillators.forEach(function (osc) {
+        osc.start(noteStart);
+        osc.stop(noteEnd + 0.05);
+        activeNodes.push(osc);
+      });
+      activeNodes.push(envelope);
+    }
+
+    function play(composition) {
+      stop();
+      var ctx = new (window.AudioContext || window.webkitAudioContext)();
+      audioCtx = ctx;
+      var beatSeconds = 60 / composition.tempo;
+      var startTime = ctx.currentTime + 0.1;
+
+      var master = ctx.createGain();
+      master.gain.value = 0.9;
+      var compressor = ctx.createDynamicsCompressor(); // native real limiter/compressor
+      master.connect(compressor);
+      compressor.connect(ctx.destination);
+
+      // A simple native feedback-delay reverb bus (two delay lines with
+      // feedback) — a lighter, real-time-friendly cousin of the server's
+      // comb/allpass Schroeder reverb, not the same algorithm, but the
+      // same idea: pure delay-line feedback, no impulse-response sample.
+      var roomSize = (composition.reverb && composition.reverb.roomSize) || 0.5;
+      var wet = (composition.reverb && composition.reverb.wet) || 0.2;
+      var reverbSend = ctx.createGain();
+      reverbSend.gain.value = wet;
+      [0.035, 0.061].forEach(function (baseDelay) {
+        var delay = ctx.createDelay(1);
+        delay.delayTime.value = baseDelay + roomSize * 0.05;
+        var feedback = ctx.createGain();
+        feedback.gain.value = 0.25 + roomSize * 0.4;
+        reverbSend.connect(delay);
+        delay.connect(feedback);
+        feedback.connect(delay);
+        delay.connect(master);
+        activeNodes.push(delay, feedback);
+      });
+      activeNodes.push(master, compressor, reverbSend);
+
+      composition.tracks.forEach(function (track) {
+        var trackGain = ctx.createGain();
+        trackGain.gain.value = track.gain != null ? track.gain : 0.8;
+        if (ctx.createStereoPanner) {
+          var panner = ctx.createStereoPanner();
+          panner.pan.value = track.pan || 0;
+          trackGain.connect(panner);
+          panner.connect(master);
+          panner.connect(reverbSend);
+          activeNodes.push(panner);
+        } else {
+          trackGain.connect(master);
+          trackGain.connect(reverbSend);
+        }
+        activeNodes.push(trackGain);
+
+        track.notes.forEach(function (note) {
+          scheduleNote(ctx, trackGain, track.waveform, note, beatSeconds, startTime);
+        });
+      });
+    }
+
+    function stop() {
+      activeNodes.forEach(function (node) {
+        try { if (node.stop) node.stop(0); } catch (e) { /* already stopped */ }
+        try { node.disconnect(); } catch (e) { /* already disconnected */ }
+      });
+      activeNodes = [];
+      if (audioCtx) {
+        try { audioCtx.close(); } catch (e) { /* already closed */ }
+        audioCtx = null;
+      }
+    }
+
+    return { play: play, stop: stop };
+  })();
+
+  document.getElementById('playLive').addEventListener('click', function () {
+    if (!lastComposition) return;
+    LiveSynth.play(lastComposition);
+    document.getElementById('stopLive').hidden = false;
+    statusEl.textContent = 'Playing live (browser synth).';
+  });
+
+  document.getElementById('stopLive').addEventListener('click', function () {
+    LiveSynth.stop();
+    document.getElementById('stopLive').hidden = true;
   });
 
   renderHistory();
