@@ -4,9 +4,13 @@ const { createRng, hashStringToSeed } = require('../../001_FOUNDATION/Utilities'
 const { createNote, createTrack, createComposition } = require('../../001_FOUNDATION/Types');
 
 // Deterministic, dependency-free algorithmic composer. Given a
-// GenerationSpec it produces a full Composition (melody + bass + drums).
-// Determinism (same spec -> same output) makes this testable and makes
-// "regenerate with the same seed" a real, reproducible feature.
+// GenerationSpec it produces a full Composition: a genre-driven chord
+// progression that the bassline and melody are harmonically locked to, a
+// chord pad, a drum pattern, dynamics (an intro/outro velocity curve), and
+// genre-appropriate timbre selection. Determinism (same spec -> same
+// output) makes this testable and makes "regenerate with the same seed" a
+// real, reproducible feature. This is algorithmic composition, not a
+// trained model.
 
 const NOTE_NAMES = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 const SCALE_INTERVALS = {
@@ -27,7 +31,78 @@ function scaleDegreeToPitch(root, degreeIndex, mode) {
   return root + interval + octaveOffset;
 }
 
-function generateMelody(spec, rng) {
+// Scale-degree roots (0-indexed: I=0, ii=1, iii=2, IV=3, V=4, vi=5, vii=6)
+// of a few well-known progressions, picked per genre. Falls back to the
+// ubiquitous I-V-vi-IV ("four chord song") progression for anything else.
+const CHORD_PROGRESSIONS = {
+  lofi: [0, 3, 5, 4],
+  jazz: [1, 4, 0, 0],
+  ambient: [0, 5, 3, 4],
+  cinematic: [0, 3, 5, 4],
+  edm: [5, 3, 0, 4],
+  trap: [5, 3, 0, 4],
+  rock: [0, 4, 5, 3],
+  classical: [0, 3, 4, 0],
+};
+const DEFAULT_PROGRESSION = [0, 4, 5, 3];
+
+function chordProgressionFor(genre) {
+  return CHORD_PROGRESSIONS[genre] ?? DEFAULT_PROGRESSION;
+}
+
+// Genre -> the melody's timbre. 'pluck' (Karplus-Strong) and 'pad'
+// (detuned oscillator stack) are real, distinct synthesis techniques from
+// 003_AUDIO_ENGINE/SynthEngine, not just different labels.
+const MELODY_WAVEFORM_BY_GENRE = {
+  lofi: 'pluck',
+  jazz: 'pluck',
+  classical: 'pluck',
+  ambient: 'pad',
+  cinematic: 'pad',
+  edm: 'saw',
+  trap: 'saw',
+  rock: 'square',
+};
+
+function melodyWaveformFor(genre) {
+  return MELODY_WAVEFORM_BY_GENRE[genre] ?? 'sine';
+}
+
+// A stacked-thirds triad (root, third, fifth) built diatonically from the
+// scale, so it's automatically major/minor-appropriate for each degree.
+function buildChord(root, degreeIndex, mode) {
+  return [0, 2, 4].map((interval) => scaleDegreeToPitch(root, degreeIndex + interval, mode));
+}
+
+function generateChordProgression(spec) {
+  const root = keyToMidiRoot(spec.key, 3);
+  const progression = chordProgressionFor(spec.genre);
+  const chords = [];
+  for (let bar = 0; bar < spec.bars; bar += 1) {
+    const degreeIndex = progression[bar % progression.length];
+    chords.push({ bar, degreeIndex, pitches: buildChord(root, degreeIndex, spec.mode) });
+  }
+  return chords;
+}
+
+// A simple arrangement dynamics curve: a fade-in over the first ~15% of
+// bars, full level through the middle, a fade-out over the last ~15% -
+// so the piece doesn't sound like it starts and stops at identical volume
+// on every bar.
+function dynamicsCurve(barIndex, totalBars) {
+  if (totalBars <= 2) return 1;
+  const introBars = Math.max(1, Math.round(totalBars * 0.15));
+  const outroBars = Math.max(1, Math.round(totalBars * 0.15));
+
+  if (barIndex < introBars) return 0.6 + 0.4 * (barIndex / introBars);
+  if (barIndex >= totalBars - outroBars) {
+    const progress = (barIndex - (totalBars - outroBars)) / outroBars;
+    return 1 - 0.4 * progress;
+  }
+  return 1;
+}
+
+function generateMelody(spec, rng, chords) {
   const root = keyToMidiRoot(spec.key, 5);
   const stepsPerBar = 4;
   const totalSteps = spec.bars * stepsPerBar;
@@ -35,8 +110,22 @@ function generateMelody(spec, rng) {
   const notes = [];
 
   for (let step = 0; step < totalSteps; step += 1) {
-    const move = Math.floor(rng() * 5) - 2; // -2..+2 scale-degree walk
-    degree = Math.max(-4, Math.min(11, degree + move));
+    const bar = Math.floor(step / stepsPerBar);
+    const stepInBar = step % stepsPerBar;
+    const dynamics = dynamicsCurve(bar, spec.bars);
+
+    if (stepInBar === 0 && chords.length > 0) {
+      // Lock onto a chord tone on the strong (first) beat of each bar so
+      // the melody actually outlines the harmony instead of wandering
+      // independently of it.
+      const chordDegree = chords[bar % chords.length].degreeIndex;
+      const chordTones = [0, 2, 4].map((i) => chordDegree + i);
+      degree = chordTones[Math.floor(rng() * chordTones.length)];
+    } else {
+      const move = Math.floor(rng() * 5) - 2; // -2..+2 scale-degree walk
+      degree = Math.max(-4, Math.min(11, degree + move));
+    }
+
     const restProbability = spec.mood === 'calm' ? 0.35 : 0.15;
     if (rng() < restProbability) continue;
     notes.push(
@@ -44,27 +133,48 @@ function generateMelody(spec, rng) {
         pitch: scaleDegreeToPitch(root, degree, spec.mode),
         start: step,
         duration: 1,
-        velocity: 70 + Math.floor(rng() * 40),
+        velocity: Math.round((70 + Math.floor(rng() * 40)) * dynamics),
       })
     );
   }
 
-  return createTrack({ name: 'melody', instrument: 'lead', waveform: 'sine', notes, gain: 0.7 });
+  return createTrack({ name: 'melody', instrument: 'lead', waveform: melodyWaveformFor(spec.genre), notes, gain: 0.7 });
 }
 
-function generateBassline(spec, rng) {
-  const root = keyToMidiRoot(spec.key, 3);
+function generateChordsTrack(spec, rng, chords) {
   const stepsPerBar = 4;
   const notes = [];
 
-  for (let bar = 0; bar < spec.bars; bar += 1) {
-    const degree = [0, 4, 5, 0][bar % 4]; // I-V-vi-I-ish walk over scale degrees
+  for (const { bar, pitches } of chords) {
+    const dynamics = dynamicsCurve(bar, spec.bars);
+    for (const pitch of pitches) {
+      notes.push(
+        createNote({
+          pitch,
+          start: bar * stepsPerBar,
+          duration: stepsPerBar,
+          velocity: Math.round((55 + Math.floor(rng() * 15)) * dynamics),
+        })
+      );
+    }
+  }
+
+  return createTrack({ name: 'chords', instrument: 'pad', waveform: 'pad', notes, gain: 0.5 });
+}
+
+function generateBassline(spec, rng, chords) {
+  const root = keyToMidiRoot(spec.key, 2);
+  const stepsPerBar = 4;
+  const notes = [];
+
+  for (const { bar, degreeIndex } of chords) {
+    const dynamics = dynamicsCurve(bar, spec.bars);
     notes.push(
       createNote({
-        pitch: scaleDegreeToPitch(root, degree, spec.mode),
+        pitch: scaleDegreeToPitch(root, degreeIndex, spec.mode),
         start: bar * stepsPerBar,
         duration: stepsPerBar,
-        velocity: 90 + Math.floor(rng() * 20),
+        velocity: Math.round((90 + Math.floor(rng() * 20)) * dynamics),
       })
     );
   }
@@ -154,11 +264,17 @@ function generateComposition(spec, { seed } = {}) {
   const rngSeed = seed ?? hashStringToSeed(JSON.stringify(spec));
   const rng = createRng(rngSeed);
 
-  const tracks = [generateMelody(spec, rng), generateBassline(spec, rng), generateDrumPattern(spec, rng)];
+  const chords = generateChordProgression(spec);
+  const tracks = [
+    generateMelody(spec, rng, chords),
+    generateChordsTrack(spec, rng, chords),
+    generateBassline(spec, rng, chords),
+    generateDrumPattern(spec, rng),
+  ];
 
   // instrumental must be explicitly false to opt into a vocal line, so
   // callers that never mention it (existing specs/tests) keep the
-  // original three-track output.
+  // original instrumental-only output.
   if (spec.instrumental === false) {
     tracks.push(generateVocalLine(spec, rng, spec.voiceProfile));
   }
@@ -176,9 +292,15 @@ function generateComposition(spec, { seed } = {}) {
 module.exports = {
   keyToMidiRoot,
   scaleDegreeToPitch,
+  chordProgressionFor,
+  melodyWaveformFor,
+  buildChord,
+  generateChordProgression,
+  dynamicsCurve,
   pitchHzToMidi,
   clampPitchToRange,
   generateMelody,
+  generateChordsTrack,
   generateBassline,
   generateDrumPattern,
   generateVocalLine,

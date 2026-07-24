@@ -26,22 +26,36 @@ packages, so `npm install` never touches the network:
   generation spec (genre/mood/tempo/key/bars); `Guardrails` sanitizes
   prompts and clamps the spec into safe ranges; `ModelRouter` dispatches to
   registered generator backends with priority + fallback.
-- **Audio Engine**: `SynthEngine` is a real oscillator bank (sine/square/
-  saw/triangle) with envelopes; `AudioRenderer` renders a `Composition`
-  into PCM, encodes a playable 16-bit WAV, and decodes one back (used to
-  read uploaded voice recordings); `MixMaster` mixes, normalizes, and
-  soft-limits buffers. `VoiceProfiler` does real (if basic) voice
-  analysis — autocorrelation pitch detection and a spectral-centroid
-  "brightness" estimate — to measure a speaker's actual pitch range.
-  **This is not neural voice cloning**: no ML model, no timbre transfer,
-  just a real pitch-range measurement used to keep a synthesized vocal
-  line within that range. `PythonRunner/audio_metrics.py` independently
-  verifies peak/RMS/clipping on real WAV bytes via the stdlib `wave` module.
+- **Audio Engine**: `SynthEngine` has four phase-based oscillators
+  (sine/square/saw/triangle) with a real ADSR envelope, plus two
+  genuinely different synthesis techniques for richer timbre: `pad`
+  (three detuned saw oscillators summed and low-passed) and `pluck`
+  (Karplus-Strong physical modeling — a damped noise burst circulating
+  through a delay line, which is where the natural plucked-string decay
+  comes from, not a sample or a synthetic fade). `AudioRenderer` renders
+  a `Composition` into PCM, encodes a playable 16-bit WAV, and decodes
+  one back (used to read uploaded voice recordings); `MixMaster` mixes,
+  normalizes, and soft-limits buffers. `VoiceProfiler` does real (if
+  basic) voice analysis — autocorrelation pitch detection and a
+  spectral-centroid "brightness" estimate — to measure a speaker's
+  actual pitch range. **This is not neural voice cloning**: no ML
+  model, no timbre transfer, just a real pitch-range measurement used
+  to keep a synthesized vocal line within that range.
+  `PythonRunner/audio_metrics.py` independently verifies peak/RMS/
+  clipping on real WAV bytes via the stdlib `wave` module.
 - **Composition Agent**: `SessionManager` (in-memory session CRUD + TTL
-  pruning), `CompositionMemory` (per-session event history), `TrackGenerator`
-  (deterministic, seeded algorithmic composer producing melody/bass/drums,
-  plus an optional vocal line shaped to a voice profile when
-  `instrumental: false`).
+  pruning), `CompositionMemory` (per-session event history),
+  `TrackGenerator` — a deterministic, seeded algorithmic composer, not a
+  trained model. It builds a genre-specific chord progression (e.g. jazz
+  gets ii-V-I, EDM gets vi-IV-I-V) and locks the bassline to each bar's
+  chord root; the melody leans onto a chord tone on the strong beat of
+  each bar (real harmonic awareness, not an independent random walk) and
+  picks its timbre by genre (`pluck` for lofi/jazz/classical, `pad` for
+  ambient/cinematic, `saw` for edm/trap, `square` for rock); a
+  `dynamicsCurve` fades the arrangement in over the first ~15% of bars
+  and out over the last ~15% instead of constant volume throughout. An
+  optional vocal line is added, shaped to a voice profile, when
+  `instrumental: false`.
 - **Interface**: `WebSockets` is a hand-rolled RFC 6455 server (handshake,
   framing, masking) with no `ws` dependency. `REST_API` exposes both a
   session-based API (`POST /api/sessions`, `POST /api/sessions/:id/generate`,
