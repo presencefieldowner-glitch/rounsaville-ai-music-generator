@@ -360,6 +360,7 @@ main() {
   log_info "Building Web & API Gateways..."
   InterfaceLayer=(
     "005_INTERFACE/WebSockets"
+    "005_INTERFACE/JitterBuffer"
     "005_INTERFACE/REST_API"
     "005_INTERFACE/WebUI"
   )

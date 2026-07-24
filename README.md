@@ -63,7 +63,19 @@ packages, so `npm install` never touches the network:
   Netlify functions kept rendering mono with no reverb/seed support
   after `REST_API` grew those features locally).
 - **Interface**: `WebSockets` is a hand-rolled RFC 6455 server (handshake,
-  framing, masking) with no `ws` dependency. `REST_API` exposes both a
+  framing, masking) with no `ws` dependency. `JitterBuffer` is a real
+  jitter buffer + packet-loss concealment — the actual technique
+  real-time audio/VoIP systems use for network jitter and dropped
+  packets: sequenced frames, an initial buffering delay so out-of-order
+  arrivals still get replayed in the right order, and concealment
+  (a faded repeat of the last good frame, degrading to true silence
+  rather than looping forever) for frames that never arrive. Verified
+  against a real rendered composition, not just synthetic data: chunked
+  into 20ms frames, two arrivals swapped and one dropped, reconstructed
+  in exact order with the loss audibly concealed. It's a standalone,
+  tested primitive — not yet wired into a live-streaming UI feature,
+  since the current architecture generates a complete WAV per request
+  rather than streaming synthesis over the wire. `REST_API` exposes both a
   session-based API (`POST /api/sessions`, `POST /api/sessions/:id/generate`,
   `GET /api/sessions/:id`) and a stateless one (`POST /api/generate`,
   `POST /api/voice-profile`, `GET /api/health`) — the stateless routes are
