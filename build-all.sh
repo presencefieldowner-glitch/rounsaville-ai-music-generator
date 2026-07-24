@@ -352,6 +352,7 @@ main() {
     "004_COMPOSITION_AGENT/SessionManager"
     "004_COMPOSITION_AGENT/CompositionMemory"
     "004_COMPOSITION_AGENT/TrackGenerator"
+    "004_COMPOSITION_AGENT/GenerationPipeline"
   )
   for module in "${CompositionLayer[@]}"; do run_module "$module" || true; done
 

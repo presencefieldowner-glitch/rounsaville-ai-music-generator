@@ -55,7 +55,13 @@ packages, so `npm install` never touches the network:
   `dynamicsCurve` fades the arrangement in over the first ~15% of bars
   and out over the last ~15% instead of constant volume throughout. An
   optional vocal line is added, shaped to a voice profile, when
-  `instrumental: false`.
+  `instrumental: false`. `GenerationPipeline` is the shared orchestration
+  glue (prompt -> spec -> composition -> render -> reverb -> master ->
+  WAV, plus voice-sample validation/analysis) that both `REST_API` and
+  the Netlify functions call — extracted specifically so the two
+  interfaces can't drift out of sync the way they briefly did (the
+  Netlify functions kept rendering mono with no reverb/seed support
+  after `REST_API` grew those features locally).
 - **Interface**: `WebSockets` is a hand-rolled RFC 6455 server (handshake,
   framing, masking) with no `ws` dependency. `REST_API` exposes both a
   session-based API (`POST /api/sessions`, `POST /api/sessions/:id/generate`,

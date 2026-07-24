@@ -2,15 +2,15 @@
 
 const http = require('node:http');
 const { createLogger, createRateLimiter } = require('../../001_FOUNDATION/Utilities');
-const { sanitizePrompt, validateSpec } = require('../../002_LLM_GATEWAY/Guardrails');
-const { parsePrompt } = require('../../002_LLM_GATEWAY/PromptEngine');
-const { createModelRouter } = require('../../002_LLM_GATEWAY/ModelRouter');
-const { generateComposition } = require('../../004_COMPOSITION_AGENT/TrackGenerator');
 const { createSessionManager } = require('../../004_COMPOSITION_AGENT/SessionManager');
 const { createCompositionMemory } = require('../../004_COMPOSITION_AGENT/CompositionMemory');
-const { renderComposition, interleaveStereo, encodeWav, decodeWav } = require('../../003_AUDIO_ENGINE/AudioRenderer');
-const { normalizeStereo, applyLimiterStereo, applyReverbStereo } = require('../../003_AUDIO_ENGINE/MixMaster');
-const { analyzeVoiceSample, buildVoiceProfile } = require('../../003_AUDIO_ENGINE/VoiceProfiler');
+const {
+  defaultModelRouter,
+  runGeneration,
+  analyzeVoiceSamples,
+  MAX_VOICE_SAMPLES,
+  MAX_VOICE_SAMPLE_BASE64_LENGTH,
+} = require('../../004_COMPOSITION_AGENT/GenerationPipeline');
 
 const logger = createLogger('REST_API', { level: 'warn' });
 
@@ -19,8 +19,6 @@ const logger = createLogger('REST_API', { level: 'warn' });
 // body-size cap is route-dependent rather than one global number.
 const DEFAULT_MAX_BODY_BYTES = 200_000;
 const VOICE_PROFILE_MAX_BODY_BYTES = 20_000_000;
-const MAX_VOICE_SAMPLES = 10;
-const MAX_VOICE_SAMPLE_BASE64_LENGTH = 8_000_000; // ~6MB decoded, well over a few seconds of 16-bit mono WAV
 
 function readJsonBody(req, { maxBytes = DEFAULT_MAX_BODY_BYTES } = {}) {
   return new Promise((resolve, reject) => {
@@ -45,49 +43,6 @@ function sendJson(res, status, body) {
   const payload = JSON.stringify(body);
   res.writeHead(status, { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) });
   res.end(payload);
-}
-
-function defaultModelRouter() {
-  const router = createModelRouter();
-  // spec.seed rides along on the spec object (same pattern as
-  // instrumental/voiceProfile) so ModelRouter's single-argument interface
-  // doesn't need to change; generateComposition falls back to a fresh
-  // random seed when it's absent.
-  router.register('algorithmic-composer', async (spec) => generateComposition(spec, { seed: spec.seed }), {
-    priority: 10,
-  });
-  return router;
-}
-
-const MAX_SEED = 2 ** 31 - 1;
-
-// Shared by the session-based /generate and the stateless /api/generate:
-// prompt text -> sanitized spec -> composition -> rendered/mastered WAV.
-// Every generation has a seed — either the caller's (for "regenerate the
-// same track") or a freshly random one — and it's always reported back so
-// the caller can capture it for later.
-async function runGeneration(body, modelRouter) {
-  const cleanPrompt = sanitizePrompt(body.prompt ?? '');
-  const parsedSpec = parsePrompt(cleanPrompt);
-  const seed = Number.isFinite(body.seed) ? Math.floor(body.seed) & MAX_SEED : Math.floor(Math.random() * MAX_SEED);
-  // An explicit body.instrumental (from a UI toggle) wins; otherwise fall
-  // back to whatever the prompt text itself said (see PromptEngine's
-  // detectInstrumental), which can also be undefined.
-  const spec = validateSpec({
-    ...parsedSpec,
-    instrumental: body.instrumental ?? parsedSpec.instrumental,
-    voiceProfile: body.voiceProfile,
-    seed,
-  });
-
-  const { modelUsed, result: composition } = await modelRouter.route(spec);
-  const { left, right, sampleRate } = renderComposition(composition);
-  const reverberated = applyReverbStereo(left, right, sampleRate, composition.reverb);
-  const normalized = normalizeStereo(reverberated.left, reverberated.right);
-  const mastered = applyLimiterStereo(normalized.left, normalized.right);
-  const wav = encodeWav(interleaveStereo(mastered.left, mastered.right), sampleRate, 2);
-
-  return { cleanPrompt, spec, modelUsed, composition, sampleRate, wav, seed };
 }
 
 function sendGenerationResult(res, body, result) {
@@ -155,23 +110,7 @@ function createApp({
   async function handleVoiceProfile(req, res) {
     const body = await readJsonBody(req, { maxBytes: VOICE_PROFILE_MAX_BODY_BYTES });
     const base64Samples = body.samples ?? (body.base64Wav ? [body.base64Wav] : []);
-    if (!Array.isArray(base64Samples) || base64Samples.length === 0) {
-      return sendJson(res, 400, { error: 'at least one base64-encoded WAV sample is required' });
-    }
-    if (base64Samples.length > MAX_VOICE_SAMPLES) {
-      return sendJson(res, 400, { error: `too many voice samples (max ${MAX_VOICE_SAMPLES})` });
-    }
-    const oversized = base64Samples.find((s) => typeof s !== 'string' || s.length > MAX_VOICE_SAMPLE_BASE64_LENGTH);
-    if (oversized !== undefined) {
-      return sendJson(res, 400, { error: 'a voice sample exceeds the maximum allowed size' });
-    }
-
-    const analyses = base64Samples.map((base64Wav) => {
-      const { samples, sampleRate } = decodeWav(Buffer.from(base64Wav, 'base64'));
-      return analyzeVoiceSample(samples, sampleRate);
-    });
-
-    const voiceProfile = buildVoiceProfile(analyses);
+    const voiceProfile = analyzeVoiceSamples(base64Samples); // throws -> caught below -> 400
     sendJson(res, 200, { voiceProfile });
   }
 
