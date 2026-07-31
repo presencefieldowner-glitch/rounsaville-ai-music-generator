@@ -4,9 +4,12 @@
   "private": true,
   "description": "005_INTERFACE/WebSockets module of the Rounsaville AI Music Generator ecosystem.",
   "main": "index.js",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
-    "build": "node -e \"console.log('005_INTERFACE/WebSockets build ok')\"",
-    "test": "node -e \"console.log('005_INTERFACE/WebSockets tests ok')\""
+    "build": "node -e \"require('./index.js'); console.log('005_INTERFACE/WebSockets build ok')\"",
+    "test": "node --test"
   },
   "license": "UNLICENSED"
 }

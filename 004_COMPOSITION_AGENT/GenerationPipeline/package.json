@@ -1,0 +1,15 @@
+{
+  "name": "@rounsaville-ai-music-generator/004-composition-agent-generationpipeline",
+  "version": "0.1.0",
+  "private": true,
+  "description": "004_COMPOSITION_AGENT/GenerationPipeline module of the Rounsaville AI Music Generator ecosystem.",
+  "main": "index.js",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "node -e \"require('./index.js'); console.log('004_COMPOSITION_AGENT/GenerationPipeline build ok')\"",
+    "test": "node --test"
+  },
+  "license": "UNLICENSED"
+}

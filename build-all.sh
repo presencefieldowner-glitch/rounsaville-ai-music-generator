@@ -1558,6 +1558,7 @@ build_llm_layer() {
     "002_LLM_GATEWAY/PromptEngine"
     "002_LLM_GATEWAY/ModelRouter"
     "002_LLM_GATEWAY/Guardrails"
+    "002_LLM_GATEWAY/LyricsEngine"
   )
 
   for module in "${modules[@]}"; do
@@ -1573,6 +1574,8 @@ build_audio_layer() {
     "003_AUDIO_ENGINE/SynthEngine"
     "003_AUDIO_ENGINE/AudioRenderer"
     "003_AUDIO_ENGINE/MixMaster"
+    "003_AUDIO_ENGINE/VoiceProfiler"
+    "003_AUDIO_ENGINE/PhaseVocoder"
   )
 
   for module in "${modules[@]}"; do
@@ -1588,6 +1591,7 @@ build_composition_layer() {
     "004_COMPOSITION_AGENT/SessionManager"
     "004_COMPOSITION_AGENT/CompositionMemory"
     "004_COMPOSITION_AGENT/TrackGenerator"
+    "004_COMPOSITION_AGENT/GenerationPipeline"
   )
 
   for module in "${modules[@]}"; do
@@ -1601,6 +1605,7 @@ build_interface_layer() {
 
   local modules=(
     "005_INTERFACE/WebSockets"
+    "005_INTERFACE/JitterBuffer"
     "005_INTERFACE/REST_API"
     "005_INTERFACE/WebUI"
   )

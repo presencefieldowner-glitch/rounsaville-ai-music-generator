@@ -14,10 +14,254 @@ dependency-ordered layers below, and can export or archive the full tree.
 | Composition Agent | `004_COMPOSITION_AGENT/` | Session state, composition memory, track generation |
 | Interface | `005_INTERFACE/` | WebSocket, REST API, and web UI gateways |
 
-Each JS/TS module is a standalone npm package (`package.json` + `index.js`)
-that currently ships as a stub — replace the stub logic as real
-implementations land. `npm run build` / `npm test` in each stub just prints a
-confirmation so `build-all.sh` has something real to orchestrate end-to-end.
+Each JS module is a standalone npm package (`package.json` + `index.js` +
+`test/`) with a real, dependency-free implementation — no external npm
+packages, so `npm install` never touches the network:
+
+- **Foundation**: `Types` (Note/Track/Composition/Session factories +
+  validators), `Utilities` (id generation, seeded PRNG, dB/MIDI math,
+  retry/logging), `ProtocolSpecs` (the message envelope shared across
+  layers).
+- **LLM Gateway**: `PromptEngine` parses free text into a structured
+  generation spec (genre/mood/tempo/key/bars); `Guardrails` sanitizes
+  prompts and clamps the spec into safe ranges; `ModelRouter` dispatches to
+  registered generator backends with priority + fallback. `LyricsEngine` is
+  a real, deterministic, seeded template + rhyme-family lyric generator —
+  **not an LLM** (there's no network access to one here): mad-libs-style
+  line templates filled from mood-tagged word banks, closed by true rhymes
+  (hand-grouped by actual sound, e.g. `night`/`light`/`flight`, not
+  spelling) in an ABCB stanza scheme, plus a short "Adjective Noun" song
+  title (e.g. "Golden Morning") drawn from the same mood word bank. It
+  shares the same seed as the audio composition, so regenerating with a
+  given seed reproduces identical lyrics (and title) too. **This does not
+  produce sung vocals**: nothing in this codebase does text-to-singing-
+  voice synthesis — `TrackGenerator`'s "vocal" track is a wordless,
+  pitch-matched melody line, not these words being sung.
+
+  `PromptEngine`'s key-detection regex had a real correctness bug, since
+  fixed: the original pattern (`/\b([A-G](?:#|b)?)\s*(major|minor)?\b/i`)
+  matched a bare leading article "a"/"A" as the musical key under the
+  case-insensitive flag, so "a lofi track in C major" was silently parsed
+  as key A, not C — found and fixed as part of this pass, not by design.
+  The fix anchors key detection to an explicit "in \<key\>" / "key of
+  \<key\>" context, and normalizes flat spellings ("Bb minor") to their
+  sharp enharmonic equivalent ("A#" — see `Guardrails.ALLOWED_KEYS`,
+  which only recognizes sharps) instead of silently falling back to the
+  default key.
+
+  `PromptEngine` also detects two negative instrument constraints ("no
+  drums"/"drumless", "no bass"/"bassless") and a real 3/4 waltz time
+  signature ("waltz" or literal "3/4"), all threaded through
+  `Guardrails.validateSpec` (which only accepts the two time signatures
+  `TrackGenerator` actually renders distinctly — 4/4 and 3/4 — falling
+  back to 4/4 for anything else, including 6/8, rather than silently
+  claiming to support a feel nothing plays differently for) down into
+  `TrackGenerator`: `noDrums`/`noBass` omit those tracks entirely, and 3/4
+  drives a genuinely different rhythm grid (3 beats per bar instead of 4)
+  plus a distinct "oom-pah-pah" waltz drum pattern (kick on the downbeat,
+  hi-hats on the two weaker beats), not just a metadata label — verified
+  by asserting the actual bar-to-bar note spacing and by comparing
+  rendered WAV duration against an equivalent 4/4 piece via
+  `AudioRenderer`. Every one of these composable with an explicit
+  `body.<field>` override in `GenerationPipeline`/`REST_API`/Netlify
+  (mirroring how `instrumental` already worked), so a UI toggle wins over
+  whatever the prompt text says.
+- **Audio Engine**: `SynthEngine` has four phase-based oscillators
+  (sine/square/saw/triangle) with a real ADSR envelope, plus two
+  genuinely different synthesis techniques for richer timbre: `pad`
+  (three detuned saw oscillators summed and low-passed) and `pluck`
+  (Karplus-Strong physical modeling — a damped noise burst circulating
+  through a delay line, which is where the natural plucked-string decay
+  comes from, not a sample or a synthetic fade). `AudioRenderer` renders
+  a `Composition` into PCM, encodes a playable 16-bit WAV, and decodes
+  one back (used to read uploaded voice recordings); `MixMaster` mixes,
+  normalizes, and soft-limits buffers, and now also has a real 3-band EQ
+  (`applyEq`/`applyEqStereo`): second-order biquad filters using Robert
+  Bristow-Johnson's Audio EQ Cookbook formulas (the standard reference
+  derivation used throughout real audio software) — a low-shelf for bass
+  (200Hz), a peaking/bell for mids (1kHz), and a high-shelf for
+  treble/air (4kHz), each an actual frequency-selective IIR filter, not a
+  cosmetic per-band multiply on the raw waveform. A band at exactly 0dB is
+  skipped entirely rather than run through a nominally-transparent filter,
+  so a caller that never touches EQ gets byte-identical output to before
+  this feature existed. Verified independently of MixMaster's own math: a
+  single-frequency DFT computed directly in the test file confirms a bass
+  boost actually raises low-frequency magnitude (and roughly leaves
+  treble alone), a treble cut lowers high-frequency magnitude (and
+  roughly leaves bass alone), and a mid boost affects 1kHz measurably
+  more than either extreme. Wired into `GenerationPipeline` as an
+  optional `eq: { bassDb, midDb, trebleDb }` request param (each clamped
+  to +/-12dB) applied after pitch/tempo processing and before final
+  loudness normalization — real mastering-chain order — and exposed as
+  three sliders in the WebUI. `VoiceProfiler` does real (if
+  basic) voice analysis — autocorrelation pitch detection and a
+  spectral-centroid "brightness" estimate — to measure a speaker's
+  actual pitch range. **This is not neural voice cloning**: no ML
+  model, no timbre transfer, just a real pitch-range measurement used
+  to keep a synthesized vocal line within that range.
+  `PythonRunner/audio_metrics.py` independently verifies peak/RMS/
+  clipping on real WAV bytes via the stdlib `wave` module. `PhaseVocoder`
+  is a real phase vocoder — a from-scratch iterative radix-2 Cooley-Tukey
+  FFT (nothing else in the repo needed a full FFT before this), STFT
+  analysis with phase unwrapping to track each bin's true instantaneous
+  frequency, and overlap-add resynthesis. `timeStretch` changes duration
+  while preserving pitch; `pitchShift` (stretch, then resample back to
+  the original length) changes pitch while preserving duration. Verified
+  against an independent pitch estimator (`VoiceProfiler`'s
+  autocorrelation detector, not its own math): a stretched sine still
+  measures at its original frequency, and +/-12 semitones measures at
+  double/half frequency. Wired into `GenerationPipeline` as optional
+  `pitchSemitones` (+/-12) / `tempoStretch` (0.5x-2x) request params, and
+  into the WebUI as pitch-bend/tempo-stretch sliders — confirmed through
+  a real browser end-to-end (slider -> API -> phase vocoder -> WAV): an
+  8-bar default track at 120 bpm (~17s) came back at ~34s with a 2x
+  tempo-stretch request, exactly as expected.
+- **Composition Agent**: `SessionManager` (in-memory session CRUD + TTL
+  pruning), `CompositionMemory` (per-session event history),
+  `TrackGenerator` — a deterministic, seeded algorithmic composer, not a
+  trained model. It builds a genre-specific chord progression (e.g. jazz
+  gets ii-V-I, EDM gets vi-IV-I-V, country gets the classic three-chord
+  I-IV-I-V) and locks the bassline to each bar's chord root; the melody
+  leans onto a chord tone on the strong beat of each bar (real harmonic
+  awareness, not an independent random walk) and picks its timbre by
+  genre (`pluck` for lofi/jazz/classical/country, `pad` for
+  ambient/cinematic, `saw` for edm/trap, `square` for rock); a
+  `dynamicsCurve` fades the arrangement in over the first ~15% of bars
+  and out over the last ~15% instead of constant volume throughout. An
+  optional vocal line is added, shaped to a voice profile, when
+  `instrumental: false`.
+
+  Each genre bucket is a real, distinct *treatment*, not just a label —
+  three per-genre dimensions beyond progression/timbre/reverb:
+  `humanizeAmountFor` sets the timing feel (rap/trap and edm are
+  machine-tight — every melody note lands exactly on the grid, the
+  honest, implementable version of "strict transient alignment" — while
+  jazz gets the loosest off-grid nudge and country/classical sit in
+  between); `stereoWidthFor` scales the stereo field (acoustic ensemble
+  genres like country/classical spread the players wide the way live
+  room micing would, trap/edm keep energy near the center so the low
+  end stays mono-solid); and `masteringFor` supplies a per-genre
+  mastering profile — a tone-shaping curve for MixMaster's real biquad
+  EQ plus a limiter threshold, where trap/edm push the low shelf and
+  limit hard (tight, loud) and country/classical get a touch of treble
+  air with a limiter that barely engages, genuinely preserving dynamic
+  range. (Note the EQ's bass shelf sits at 200Hz — this synth engine
+  doesn't produce meaningful 20–60Hz sub-bass content, so no sub-bass
+  claims.) Verified end-to-end: a trap render is byte-different from
+  the same composition mastered neutrally, its melody is fully
+  grid-quantized, and a country melody measurably sits wider in the
+  stereo field than a trap one. To be explicit about what this is
+  *not*: there is no autoregressive transformer, no audio diffusion
+  model, and no CLAP text-audio encoder anywhere in this repo — those
+  are large trained ML systems this environment can't run; the
+  keyword-driven `PromptEngine` -> spec -> deterministic composer
+  pipeline is the honest stand-in for that text-to-intent mapping. `GenerationPipeline` is the shared orchestration
+  glue (prompt -> spec -> composition -> render -> reverb -> master ->
+  WAV, plus voice-sample validation/analysis) that both `REST_API` and
+  the Netlify functions call — extracted specifically so the two
+  interfaces can't drift out of sync the way they briefly did (the
+  Netlify functions kept rendering mono with no reverb/seed support
+  after `REST_API` grew those features locally). It also exposes
+  `generateLyricsForPrompt`, a fast, audio-free path (parse prompt -> spec
+  -> `LyricsEngine`) used by the standalone `POST /api/lyrics` endpoint and
+  reused inside `runGeneration` so a track's audio and its lyrics are
+  always generated from the same seed.
+- **Interface**: `WebSockets` is a hand-rolled RFC 6455 server (handshake,
+  framing, masking) with no `ws` dependency. `JitterBuffer` is a real
+  jitter buffer + packet-loss concealment — the actual technique
+  real-time audio/VoIP systems use for network jitter and dropped
+  packets: sequenced frames, an initial buffering delay so out-of-order
+  arrivals still get replayed in the right order, and concealment
+  (a faded repeat of the last good frame, degrading to true silence
+  rather than looping forever) for frames that never arrive. Verified
+  against a real rendered composition, not just synthetic data: chunked
+  into 20ms frames, two arrivals swapped and one dropped, reconstructed
+  in exact order with the loss audibly concealed. It's a standalone,
+  tested primitive — not yet wired into a live-streaming UI feature,
+  since the current architecture generates a complete WAV per request
+  rather than streaming synthesis over the wire. `REST_API` exposes both a
+  session-based API (`POST /api/sessions`, `POST /api/sessions/:id/generate`,
+  `GET /api/sessions/:id`) and a stateless one (`POST /api/generate`,
+  `POST /api/voice-profile`, `GET /api/health`) — the stateless routes are
+  what the WebUI and the Netlify deployment use, since serverless
+  invocations don't reliably share in-memory session state. Every
+  generation carries a seed (caller-supplied or fresh), always reported
+  back, so "regenerate the exact same track" is real and exact — verified
+  by asserting byte-identical compositions across two requests with the
+  same seed. The compute-heavy routes are rate-limited with a real
+  token-bucket (`429` + `Retry-After`; only meaningful for this
+  persistent process, not the stateless Netlify functions), and
+  `/api/voice-profile` caps sample count/size separately from the
+  smaller default body limit, since a voice recording is legitimately
+  much bigger than a prompt. `POST /api/lyrics` is the audio-free lyrics
+  preview described above — same rate-limited/compute-heavy treatment as
+  `/api/generate`, and `/api/generate`'s JSON response now also carries a
+  `lyrics` field generated with that same request's seed.
+
+  `WebUI` has a **Lyrics** section: a "Generate Lyrics" button that calls
+  `/api/lyrics` and renders the song title plus verse/chorus text, plus an
+  always-visible, in-product disclaimer (not just documentation) that this
+  is real template + rhyme generation, not an LLM, and that the words are
+  never sung by the generated audio since there's no text-to-singing-voice
+  synthesis anywhere in this system. Generating a full track also
+  refreshes the lyrics (via the same seed, so they match exactly). The
+  Voice Profile section's recording phrases are then derived from those
+  actual generated lyric lines (`deriveRecordingPhrases`) instead of the
+  generic "hum a low note" fallback — so recording calibrates pitch range
+  against the real words the user would say — with its own disclaimer
+  reiterating that this still doesn't make the output audio pronounce
+  those words or clone voice timbre.
+
+  The Studio section also has Bass/Mid/Treble EQ sliders (+/-12dB, wired
+  to `MixMaster`'s real biquad EQ) and three checkboxes — No drums, No
+  bass, Waltz (3/4 time) — each backed by a real behavioral change
+  (dropped tracks, a genuinely different rhythm grid and drum pattern),
+  not cosmetic labels; unchecked/neutral defaults keep byte-identical
+  output to before these controls existed.
+
+  `WebUI` is a single-page studio (style/BPM/bars/instrumental controls,
+  seed display + "regenerate with same seed", a download-as-file link,
+  thumbs up/down rating, and a voice-recording flow) generated by
+  `scripts/build-static-site.js` into `public/index.html` for the
+  Netlify deploy, so there's one source of truth instead of two
+  hand-maintained copies. Track history stores the generation *recipe*
+  (prompt/instrumental/voiceProfile/seed) rather than the rendered
+  audio and re-fetches on playback — storing full stereo WAVs in
+  `localStorage` blew the browser's storage quota after a couple of
+  tracks (found by actually driving this in a real headless-Chromium
+  session, not just asserting on the HTML string).
+
+  For local dev, `WebUI` and `REST_API` are two separate `http.Server`
+  instances; `startWebUI(port, { apiProxyTarget })` forwards `/api/*` to
+  a real `REST_API` instance so the page's relative fetches work without
+  a CORS/hosting setup, mirroring what `netlify.toml`'s redirect does in
+  production:
+  ```js
+  const { startServer } = require('./005_INTERFACE/REST_API');
+  const { startWebUI } = require('./005_INTERFACE/WebUI');
+  const { server: api } = await startServer(4000);
+  await startWebUI(3000, { apiProxyTarget: 'http://127.0.0.1:4000' });
+  // open http://127.0.0.1:3000/
+  ```
+
+  Every generation also gets a **"Play Live (browser synth)"** option: instead
+  of playing the server-rendered WAV, it synthesizes the returned
+  composition (notes, chords, timing) in real time using the Web Audio
+  API — native `OscillatorNode`s mirroring `SynthEngine`'s waveforms,
+  gain-automated ADSR envelopes, `StereoPannerNode` for track panning, a
+  feedback-delay reverb bus, and a real `DynamicsCompressorNode` as the
+  limiter. The audio genuinely doesn't exist as fixed samples until that
+  code runs on your device. Its `pluck` timbre is an honest approximation
+  (a fast-decaying oscillator, not true Karplus-Strong) since real-time
+  physical modeling needs an `AudioWorklet` this page doesn't include.
+  Verified in a real headless-Chromium session with a spy on
+  `createOscillator`: a single generated composition creates ~180+ real
+  oscillator nodes with zero console errors, not just HTML containing the
+  right function names.
+
+Every module's `npm test` runs real assertions via Node's built-in
+`node:test` runner (no jest/mocha needed); `PythonRunner` runs via
+`unittest`.
 
 ## Usage
 

@@ -4,9 +4,12 @@
   "private": true,
   "description": "002_LLM_GATEWAY/PromptEngine module of the Rounsaville AI Music Generator ecosystem.",
   "main": "index.js",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
-    "build": "node -e \"console.log('002_LLM_GATEWAY/PromptEngine build ok')\"",
-    "test": "node -e \"console.log('002_LLM_GATEWAY/PromptEngine tests ok')\""
+    "build": "node -e \"require('./index.js'); console.log('002_LLM_GATEWAY/PromptEngine build ok')\"",
+    "test": "node --test"
   },
   "license": "UNLICENSED"
 }
