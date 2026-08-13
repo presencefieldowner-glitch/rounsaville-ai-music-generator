@@ -1,6 +1,7 @@
 node_modules/
 dist/
 _exports/
+_build_reports/
 *.tar.gz
 .DS_Store
 __pycache__/
