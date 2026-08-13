@@ -6,7 +6,7 @@
   "main": "index.js",
   "scripts": {
     "build": "node -e \"console.log('003_AUDIO_ENGINE/SynthEngine build ok')\"",
-    "test": "node -e \"console.log('003_AUDIO_ENGINE/SynthEngine tests ok')\""
+    "test": "node --test"
   },
   "license": "UNLICENSED"
 }

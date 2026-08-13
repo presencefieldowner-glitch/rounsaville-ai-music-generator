@@ -14,10 +14,15 @@ dependency-ordered layers below, and can export or archive the full tree.
 | Composition Agent | `004_COMPOSITION_AGENT/` | Session state, composition memory, track generation |
 | Interface | `005_INTERFACE/` | WebSocket, REST API, and web UI gateways |
 
-Each JS/TS module is a standalone npm package (`package.json` + `index.js`)
-that currently ships as a stub — replace the stub logic as real
-implementations land. `npm run build` / `npm test` in each stub just prints a
-confirmation so `build-all.sh` has something real to orchestrate end-to-end.
+Each JS/TS module is a standalone npm package (`package.json` + `index.js`).
+Most still ship as stubs whose `npm run build` / `npm test` print a
+confirmation, so `build-all.sh` has something real to orchestrate end-to-end;
+replace that stub logic as real implementations land.
+
+`003_AUDIO_ENGINE` is implemented — `SynthEngine`, `MixMaster`, and
+`AudioRenderer` are real, and their `npm test` runs actual test suites via
+`node --test` rather than printing. See
+[`003_AUDIO_ENGINE/README.md`](./003_AUDIO_ENGINE/README.md).
 
 ## Usage
 
