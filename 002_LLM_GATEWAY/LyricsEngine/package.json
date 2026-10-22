@@ -1,0 +1,15 @@
+{
+  "name": "@rounsaville-ai-music-generator/002-llm-gateway-lyricsengine",
+  "version": "0.1.0",
+  "private": true,
+  "description": "002_LLM_GATEWAY/LyricsEngine module of the Rounsaville AI Music Generator ecosystem.",
+  "main": "index.js",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "node -e \"require('./index.js'); console.log('002_LLM_GATEWAY/LyricsEngine build ok')\"",
+    "test": "node --test"
+  },
+  "license": "UNLICENSED"
+}

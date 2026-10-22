@@ -4,9 +4,12 @@
   "private": true,
   "description": "001_FOUNDATION/Types module of the Rounsaville AI Music Generator ecosystem.",
   "main": "index.js",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
-    "build": "node -e \"console.log('001_FOUNDATION/Types build ok')\"",
-    "test": "node -e \"console.log('001_FOUNDATION/Types tests ok')\""
+    "build": "node -e \"require('./index.js'); console.log('001_FOUNDATION/Types build ok')\"",
+    "test": "node --test"
   },
   "license": "UNLICENSED"
 }

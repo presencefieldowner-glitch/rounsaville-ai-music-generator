@@ -4,9 +4,12 @@
   "private": true,
   "description": "003_AUDIO_ENGINE/SynthEngine module of the Rounsaville AI Music Generator ecosystem.",
   "main": "index.js",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
-    "build": "node -e \"console.log('003_AUDIO_ENGINE/SynthEngine build ok')\"",
-    "test": "node -e \"console.log('003_AUDIO_ENGINE/SynthEngine tests ok')\""
+    "build": "node -e \"require('./index.js'); console.log('003_AUDIO_ENGINE/SynthEngine build ok')\"",
+    "test": "node --test"
   },
   "license": "UNLICENSED"
 }

@@ -4,9 +4,12 @@
   "private": true,
   "description": "004_COMPOSITION_AGENT/TrackGenerator module of the Rounsaville AI Music Generator ecosystem.",
   "main": "index.js",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
-    "build": "node -e \"console.log('004_COMPOSITION_AGENT/TrackGenerator build ok')\"",
-    "test": "node -e \"console.log('004_COMPOSITION_AGENT/TrackGenerator tests ok')\""
+    "build": "node -e \"require('./index.js'); console.log('004_COMPOSITION_AGENT/TrackGenerator build ok')\"",
+    "test": "node --test"
   },
   "license": "UNLICENSED"
 }
