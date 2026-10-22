@@ -679,6 +679,15 @@ function getIndexHtml({ apiBaseUrl = '' } = {}) {
     renderPhrases();
   }
 
+  // Turns a bare HTTP status into something the person can act on.
+  function describeApiFailure(what, status) {
+    var hint = status === 404 ? 'the /api/' + what + ' endpoint was not found, so the site may need to be redeployed'
+      : status === 429 ? 'too many requests, wait a few seconds and try again'
+      : status === 502 || status === 503 ? 'the API server is unreachable or still starting'
+      : 'unexpected server response';
+    return what + ' request failed (' + status + '): ' + hint;
+  }
+
   async function fetchAndApplyLyrics(promptText, seed) {
     var lyricsStatusEl = document.getElementById('lyricsStatus');
     lyricsStatusEl.textContent = 'Generating lyrics...';
@@ -688,7 +697,7 @@ function getIndexHtml({ apiBaseUrl = '' } = {}) {
       var res = await fetch(apiBaseUrl + '/api/lyrics', { method: 'POST', body: JSON.stringify(payload) });
       if (!res.ok) {
         var errBody = await res.json().catch(function () { return {}; });
-        throw new Error(errBody.error || ('lyrics generation failed: ' + res.status));
+        throw new Error(errBody.error || describeApiFailure('lyrics', res.status));
       }
       var body = await res.json();
       renderLyrics(body.lyrics);
@@ -696,7 +705,9 @@ function getIndexHtml({ apiBaseUrl = '' } = {}) {
       lyricsStatusEl.textContent = 'Done.';
       return body;
     } catch (err) {
-      lyricsStatusEl.textContent = 'Error: ' + err.message;
+      lyricsStatusEl.textContent = 'Error: ' + (err instanceof TypeError
+        ? 'could not reach the server (is the API running and is this page served from the same site?)'
+        : err.message);
     }
   }
 
