@@ -4,230 +4,367 @@
 <meta charset="utf-8" />
 <title>Rounsaville AI Music Generator</title>
 <meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="theme-color" content="#D6D9CF" />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@700;800;900&family=Hanken+Grotesk:wght@400;500;700&display=swap" rel="stylesheet" />
 <style>
-  :root { color-scheme: dark; }
+  :root {
+    --chassis: #D6D9CF;
+    --panel: #ECEEE7;
+    --ink: #1A1C19;
+    --muted: #555A52;
+    --line: #B3B8AB;
+    --screen: #121C19;
+    --trace: #F2B84B;
+    --blue: #2D49D6;
+    --blue-dark: #2238A8;
+    --rec: #CF3A2E;
+    --display: "Big Shoulders Display", "Arial Narrow", Impact, sans-serif;
+    --body: "Hanken Grotesk", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --gutter: clamp(14px, 3.5vw, 40px);
+  }
   * { box-sizing: border-box; }
+  html { -webkit-text-size-adjust: 100%; }
   body {
-    font-family: system-ui, sans-serif;
-    max-width: 720px;
-    margin: 0 auto;
-    padding: 2rem 1rem 4rem;
-    background: #0b0d12;
-    color: #e8e8ec;
+    margin: 0;
+    background: var(--chassis);
+    color: var(--ink);
+    font: 400 1rem/1.5 var(--body);
   }
-  h1 { font-size: 1.4rem; margin-bottom: 0.25rem; }
-  .subtitle { color: #9a9aa5; margin-top: 0; }
-  section {
-    background: #14161d;
-    border: 1px solid #23262f;
-    border-radius: 12px;
-    padding: 1.25rem;
-    margin: 1.25rem 0;
+  :focus-visible { outline: 3px solid var(--blue); outline-offset: 2px; }
+  .page { max-width: 1180px; margin: 0 auto; padding: 0 var(--gutter) 64px; }
+
+  /* masthead */
+  .masthead { padding: clamp(22px, 4vw, 44px) 0 clamp(18px, 3vw, 30px); }
+  h1 {
+    font: 900 clamp(2.6rem, 8vw, 5.6rem)/0.86 var(--display);
+    letter-spacing: -0.005em;
+    margin: 0;
+    text-transform: uppercase;
   }
-  section h2 { font-size: 1rem; margin-top: 0; }
-  .disclaimer { font-size: 0.85rem; color: #9a9aa5; border-left: 3px solid #3a3f4d; padding-left: 0.75rem; }
-  label { display: block; font-size: 0.85rem; color: #b6b6c0; margin: 0.75rem 0 0.25rem; }
-  textarea, select, input[type="text"] {
-    width: 100%; font: inherit; padding: 0.5rem;
-    background: #1c1f28; color: inherit; border: 1px solid #2c303c; border-radius: 8px;
+  h1 span { display: block; font-weight: 700; font-size: 0.42em; letter-spacing: 0.02em; margin-top: 0.35em; color: var(--muted); }
+  .subtitle { max-width: 36em; color: var(--muted); margin: 14px 0 0; }
+
+  /* layout */
+  .console { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(0, 0.95fr); gap: clamp(22px, 3vw, 44px); align-items: start; }
+  .col-right { position: sticky; top: 14px; display: grid; gap: 22px; }
+  .lower { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: clamp(22px, 3vw, 44px); margin-top: clamp(28px, 4vw, 52px); align-items: start; }
+  @media (max-width: 900px) {
+    .console, .lower { grid-template-columns: 1fr; }
+    .col-right { position: static; }
   }
-  textarea { height: 4.5rem; resize: vertical; }
-  .row { display: flex; gap: 1rem; align-items: center; }
-  .row > * { flex: 1; }
-  input[type="range"] { width: 100%; }
-  .toggle { display: flex; align-items: center; gap: 0.5rem; margin-top: 0.75rem; }
-  .toggle input { width: auto; }
+
+  h2 { font: 800 1.7rem/1 var(--display); text-transform: uppercase; letter-spacing: 0.01em; margin: 0 0 14px; }
+  h3 { font: 700 1.05rem/1.2 var(--body); margin: 0; }
+  .block { border-top: 3px solid var(--ink); padding-top: 14px; }
+  .block + .block { margin-top: 26px; }
+
+  /* form controls */
+  label { display: block; font-size: 0.9rem; font-weight: 700; margin: 0 0 6px; }
+  textarea, select {
+    width: 100%; font: inherit; padding: 11px 12px;
+    background: var(--panel); color: var(--ink);
+    border: 1.5px solid var(--ink); border-radius: 3px;
+  }
+  textarea { height: 5.2rem; resize: vertical; }
+  .field { margin-top: 16px; }
+  .field:first-of-type { margin-top: 0; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  @media (max-width: 520px) { .grid2 { grid-template-columns: 1fr; } }
+  .val { font-variant-numeric: tabular-nums; color: var(--blue-dark); }
+
+  input[type="range"] { -webkit-appearance: none; appearance: none; width: 100%; height: 28px; background: transparent; margin: 0; }
+  input[type="range"]::-webkit-slider-runnable-track { height: 4px; background: var(--ink); border-radius: 2px; }
+  input[type="range"]::-moz-range-track { height: 4px; background: var(--ink); border-radius: 2px; }
+  input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; width: 18px; height: 26px; margin-top: -11px; background: var(--blue); border: 2px solid var(--panel); border-radius: 3px; box-shadow: 0 0 0 1.5px var(--ink); }
+  input[type="range"]::-moz-range-thumb { width: 14px; height: 22px; background: var(--blue); border: 2px solid var(--panel); border-radius: 3px; box-shadow: 0 0 0 1.5px var(--ink); }
+
+  .faders { display: flex; gap: 8px; justify-content: space-between; }
+  .fader { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 6px; }
+  .fader label { margin: 0; text-align: center; font-size: 0.85rem; }
+  .fader input[type="range"] { writing-mode: vertical-lr; direction: rtl; width: 28px; height: 130px; }
+  .fader input[type="range"]::-webkit-slider-runnable-track { width: 4px; height: 100%; }
+  .fader input[type="range"]::-webkit-slider-thumb { width: 26px; height: 18px; margin-top: 0; margin-left: -11px; }
+
+  .checks { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 18px; }
+  @media (max-width: 520px) { .checks { grid-template-columns: 1fr; } }
+  .toggle { display: flex; align-items: center; gap: 10px; min-height: 38px; }
+  .toggle input { width: 20px; height: 20px; margin: 0; accent-color: var(--blue); flex: none; }
+  .toggle label { margin: 0; font-weight: 500; }
+  .toggle.wide { grid-column: 1 / -1; }
+
+  .note { font-size: 0.86rem; color: var(--muted); margin: 10px 0 0; max-width: 46em; }
+  .note strong { color: var(--ink); }
+
+  details.group { border-top: 1px solid var(--line); margin-top: 18px; padding-top: 4px; }
+  details.group > summary { list-style: none; cursor: pointer; display: flex; justify-content: space-between; align-items: center; min-height: 44px; font-weight: 700; }
+  details.group > summary::-webkit-details-marker { display: none; }
+  details.group > summary::after { content: "+"; font: 800 1.5rem/1 var(--display); color: var(--blue); }
+  details.group[open] > summary::after { content: "\2212"; }
+  details.group > .inner { padding: 4px 0 6px; }
+
+  /* buttons */
   button {
-    padding: 0.6rem 1.1rem; font: inherit; cursor: pointer;
-    background: #3b5bdb; color: white; border: none; border-radius: 8px;
+    font: 700 1rem/1 var(--body); cursor: pointer;
+    padding: 14px 20px; min-height: 46px;
+    background: var(--blue); color: #fff; border: 0; border-radius: 3px;
   }
-  button.secondary { background: #262a35; color: #e8e8ec; }
-  button:disabled { opacity: 0.5; cursor: not-allowed; }
-  button + button { margin-left: 0.5rem; }
-  #status { color: #9a9aa5; min-height: 1.2em; margin-top: 0.5rem; }
-  audio { width: 100%; margin-top: 0.75rem; }
-  .stats { display: flex; gap: 2rem; margin: 0.5rem 0 1rem; }
-  .stats div span { display: block; }
-  .stats .label { font-size: 0.75rem; color: #9a9aa5; text-transform: uppercase; }
-  .stats .value { font-size: 1.1rem; font-weight: 600; }
+  button:hover { background: var(--blue-dark); }
+  button.secondary { background: transparent; color: var(--ink); border: 1.5px solid var(--ink); padding: 11px 16px; min-height: 42px; }
+  button.secondary:hover { background: var(--ink); color: var(--panel); }
+  button:disabled { opacity: 0.45; cursor: not-allowed; }
+  button:disabled:hover { background: var(--blue); }
+  button.secondary:disabled:hover { background: transparent; color: var(--ink); }
+  button.record { background: var(--rec); }
+  button.record:hover { background: #A92C22; }
+  .actions-row { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 20px; }
+  #status { min-height: 1.4em; margin: 12px 0 0; color: var(--muted); }
+
+  /* monitor */
+  .bezel { background: var(--ink); padding: 12px; border-radius: 10px; }
+  .screen { background: var(--screen); border-radius: 4px; padding: 12px 12px 10px; color: #E6EEE8; }
+  .screen-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin-bottom: 8px; }
+  #trackTitle { font: 800 1.5rem/1 var(--display); letter-spacing: 0.01em; text-transform: uppercase; color: var(--trace); overflow-wrap: anywhere; }
+  .screen-head small { color: #9DB0A8; font-size: 0.82rem; white-space: nowrap; font-variant-numeric: tabular-nums; }
+  #scope { display: block; width: 100%; height: 200px; border-radius: 2px; }
+  audio { display: block; width: 100%; margin-top: 12px; }
+  #playerActions { margin-top: 12px; display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: center; }
+  #playerActions[hidden] { display: none; }
+  #downloadLink { color: var(--blue-dark); font-weight: 700; }
+  .seedline { font-size: 0.85rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+
+  /* history */
+  .stats { display: flex; gap: 32px; margin: 0 0 12px; }
+  .stats .label { display: block; font-size: 0.82rem; color: var(--muted); }
+  .stats .value { display: block; font: 800 1.7rem/1.05 var(--display); text-transform: uppercase; }
   ul.history { list-style: none; padding: 0; margin: 0; }
-  ul.history li {
-    display: flex; justify-content: space-between; align-items: center;
-    padding: 0.5rem 0; border-top: 1px solid #23262f;
-  }
-  ul.history li:first-child { border-top: none; }
-  ul.history .meta { font-size: 0.8rem; color: #9a9aa5; }
-  ul.history .actions { display: flex; align-items: center; gap: 0.4rem; }
-  .rate-btn { background: none; border: none; padding: 0.2rem; font-size: 1rem; cursor: pointer; opacity: 0.4; }
+  ul.history li { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 0; border-top: 1px solid var(--line); }
+  ul.history .meta { font-size: 0.82rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+  ul.history .actions { display: flex; align-items: center; gap: 6px; flex: none; }
+  .rate-btn { background: none; border: 0; padding: 6px; min-height: 38px; min-width: 38px; font-size: 1.05rem; cursor: pointer; opacity: 0.4; color: inherit; }
+  .rate-btn:hover { background: none; opacity: 0.8; }
   .rate-btn.active { opacity: 1; }
-  #downloadLink { color: #8aa4ff; }
-  .phrase { border-top: 1px solid #23262f; padding: 0.75rem 0; }
-  .phrase:first-child { border-top: none; }
-  .phrase .prompt { font-size: 0.85rem; color: #b6b6c0; margin: 0.25rem 0 0.5rem; }
-  .badge { font-size: 0.75rem; padding: 0.1rem 0.5rem; border-radius: 999px; background: #1f3d2b; color: #7fd99a; }
-  .badge.pending { background: #2a2d38; color: #9a9aa5; }
-  pre { background: #1c1f28; padding: 0.75rem; overflow: auto; border-radius: 8px; font-size: 0.8rem; }
+
+  /* lyrics + voice */
+  #lyricsStatus { margin-left: 10px; font-size: 0.9rem; color: var(--muted); }
+  #lyricsTitle { font: 800 1.5rem/1.05 var(--display); text-transform: uppercase; margin: 16px 0 8px; }
+  .phrase { border-top: 1px solid var(--line); padding: 12px 0; }
+  .phrase .prompt { font-size: 0.9rem; color: var(--muted); margin: 4px 0 10px; }
+  .phrase .said { font-style: italic; color: var(--ink); }
+  .badge { font-size: 0.78rem; padding: 2px 9px; border-radius: 99px; background: #CFE3D2; color: #1D5A2C; font-weight: 700; }
+  .badge.pending { background: #DDDFD6; color: var(--muted); }
+  pre { background: var(--panel); border: 1.5px solid var(--ink); padding: 12px; overflow: auto; border-radius: 3px; font-size: 0.82rem; }
+  code { background: var(--panel); padding: 1px 5px; border-radius: 3px; }
+  #voiceStatus { color: var(--muted); }
 </style>
 </head>
 <body>
-<h1>Rounsaville AI Music Generator</h1>
-<p class="subtitle">Describe a track, generate it, and optionally shape the vocal line to your own voice.</p>
+<div class="page">
 
-<section id="studio">
-  <h2>Studio</h2>
-  <label for="prompt">Prompt</label>
-  <textarea id="prompt" placeholder="e.g. an energetic edm track in A minor at 128 bpm"></textarea>
+<header class="masthead">
+  <h1>Rounsaville<span>AI Music Generator</span></h1>
+  <p class="subtitle">Describe a track, generate it, and optionally shape the vocal line to your own voice.</p>
+</header>
 
-  <div class="row">
-    <div>
+<div class="console">
+
+  <section id="studio" class="block" aria-labelledby="studioHead">
+    <h2 id="studioHead">Studio</h2>
+
+    <div class="field">
+      <label for="prompt">Prompt</label>
+      <textarea id="prompt" placeholder="e.g. an energetic edm track in A minor at 128 bpm"></textarea>
+    </div>
+
+    <div class="field">
       <label for="style">Style</label>
       <select id="style" title="Each style is a real, distinct treatment: its own chord progression, timbre, reverb space, timing feel (rap/trap/edm are grid-tight, jazz/country are humanized), stereo width, and mastering profile (EQ curve + limiter threshold)"><option value="lofi">lofi</option><option value="ambient">ambient</option><option value="cinematic">cinematic</option><option value="edm">edm</option><option value="jazz">jazz</option><option value="rock">rock</option><option value="classical">classical</option><option value="trap">trap</option><option value="rap">rap</option><option value="country">country</option></select>
+      <p class="note">Each style is a distinct treatment: its own chord progression, timbre, reverb space, timing feel, stereo width and mastering profile.</p>
     </div>
-    <div>
-      <label for="bpm">BPM: <span id="bpmValue">120</span></label>
-      <input type="range" id="bpm" min="40" max="220" value="120" />
+
+    <div class="grid2 field">
+      <div>
+        <label for="bpm">BPM <span class="val" id="bpmValue">120</span></label>
+        <input type="range" id="bpm" min="40" max="220" value="120" />
+      </div>
+      <div>
+        <label for="bars">Length in bars <span class="val" id="barsValue">8</span></label>
+        <input type="range" id="bars" min="1" max="32" value="8" />
+      </div>
     </div>
-    <div>
-      <label for="bars">Length (bars): <span id="barsValue">8</span></label>
-      <input type="range" id="bars" min="1" max="32" value="8" />
+
+    <details class="group" open>
+      <summary>Pitch and tempo</summary>
+      <div class="inner">
+        <div class="grid2">
+          <div>
+            <label for="pitchBend">Pitch bend, semitones <span class="val" id="pitchBendValue">0</span></label>
+            <input type="range" id="pitchBend" min="-12" max="12" value="0" />
+          </div>
+          <div>
+            <label for="tempoStretch">Tempo stretch <span class="val" id="tempoStretchValue">1.0x</span></label>
+            <input type="range" id="tempoStretch" min="50" max="200" value="100" />
+          </div>
+        </div>
+        <p class="note">
+          Both are applied to the already-rendered mix with a real phase vocoder (STFT phase
+          unwrapping + overlap-add resynthesis) &mdash; pitch bend changes pitch without changing
+          length; tempo stretch changes length without changing pitch.
+        </p>
+      </div>
+    </details>
+
+    <details class="group" open>
+      <summary>Tone</summary>
+      <div class="inner">
+        <div class="faders">
+          <div class="fader">
+            <input type="range" id="bassDb" min="-12" max="12" value="0" aria-labelledby="bassLabel" />
+            <label id="bassLabel" for="bassDb">Bass <span class="val"><span id="bassDbValue">0</span> dB</span></label>
+          </div>
+          <div class="fader">
+            <input type="range" id="midDb" min="-12" max="12" value="0" aria-labelledby="midLabel" />
+            <label id="midLabel" for="midDb">Mid <span class="val"><span id="midDbValue">0</span> dB</span></label>
+          </div>
+          <div class="fader">
+            <input type="range" id="trebleDb" min="-12" max="12" value="0" aria-labelledby="trebleLabel" />
+            <label id="trebleLabel" for="trebleDb">Treble <span class="val"><span id="trebleDbValue">0</span> dB</span></label>
+          </div>
+        </div>
+        <p class="note">
+          A real 3-band EQ &mdash; second-order biquad filters using the standard Audio EQ Cookbook
+          formulas (low-shelf/peaking/high-shelf), applied server-side before final loudness
+          normalization, not a cosmetic per-band multiply.
+        </p>
+      </div>
+    </details>
+
+    <details class="group" open>
+      <summary>Arrangement</summary>
+      <div class="inner">
+        <div class="checks">
+          <div class="toggle">
+            <input type="checkbox" id="instrumental" checked />
+            <label for="instrumental">Instrumental (no vocal line)</label>
+          </div>
+          <div class="toggle">
+            <input type="checkbox" id="noDrums" />
+            <label for="noDrums">No drums</label>
+          </div>
+          <div class="toggle">
+            <input type="checkbox" id="noBass" />
+            <label for="noBass">No bass</label>
+          </div>
+          <div class="toggle">
+            <input type="checkbox" id="waltz" />
+            <label for="waltz">Waltz (3/4 time)</label>
+          </div>
+          <div class="toggle wide">
+            <input type="checkbox" id="useVoiceProfile" disabled />
+            <label for="useVoiceProfile">Use my recorded voice profile for the vocal range</label>
+          </div>
+        </div>
+        <p class="note">
+          Waltz genuinely changes the rhythm grid the composer generates on (3 beats per bar with a
+          distinct "oom-pah-pah" drum pattern), not just a metadata label &mdash; see
+          004_COMPOSITION_AGENT/TrackGenerator.
+        </p>
+      </div>
+    </details>
+
+    <div class="actions-row">
+      <button id="generate">Generate Track</button>
+      <button class="secondary" id="regenerate" disabled title="Regenerate the exact same track from its seed">Regenerate (same seed)</button>
     </div>
+    <p id="status" role="status" aria-live="polite"></p>
+  </section>
+
+  <div class="col-right">
+    <section id="monitor" aria-label="Playback monitor">
+      <div class="bezel">
+        <div class="screen">
+          <div class="screen-head">
+            <span id="trackTitle">No track yet</span>
+            <small id="scopeInfo">Notes appear here</small>
+          </div>
+          <canvas id="scope" role="img" aria-label="Piano-roll view of the generated track's notes with a moving playhead"></canvas>
+        </div>
+      </div>
+      <audio id="player" controls></audio>
+      <div id="playerActions" hidden>
+        <a id="downloadLink" download="track.wav">Download WAV</a>
+        <span class="seedline">Seed <span id="seedValue"></span></span>
+        <button class="secondary" id="playLive" title="Synthesize this composition live in the browser instead of playing the server-rendered file">Play Live (browser synth)</button>
+        <button class="secondary" id="stopLive" hidden>Stop</button>
+      </div>
+      <p class="note">
+        "Play Live" doesn't play the WAV above &mdash; it synthesizes the composition (notes, chords,
+        timing) directly in your browser via the Web Audio API, in real time, at the moment you click
+        play. The audio genuinely isn't fixed until then. Its <code>pluck</code> timbre is an
+        approximation (a fast-decaying oscillator) of the server's real Karplus-Strong physical
+        modeling, since that needs an AudioWorklet this page doesn't include.
+      </p>
+    </section>
+
+    <section id="history" class="block" aria-labelledby="historyHead">
+      <h2 id="historyHead">Track History</h2>
+      <div class="stats">
+        <div><span class="label">System status</span><span class="value" id="systemStatus">Idle</span></div>
+        <div><span class="label">Total tracks</span><span class="value" id="totalTracks">0</span></div>
+      </div>
+      <ul class="history" id="historyList"></ul>
+      <div style="margin-top:12px;">
+        <button class="secondary" id="clearHistory">Clear history</button>
+      </div>
+    </section>
   </div>
 
-  <div class="row">
-    <div>
-      <label for="pitchBend">Pitch bend (semitones): <span id="pitchBendValue">0</span></label>
-      <input type="range" id="pitchBend" min="-12" max="12" value="0" />
+</div>
+
+<div class="lower">
+  <section id="lyrics" class="block" aria-labelledby="lyricsHead">
+    <h2 id="lyricsHead">Lyrics</h2>
+    <button class="secondary" id="generateLyrics">Generate Lyrics</button>
+    <span id="lyricsStatus" role="status" aria-live="polite"></span>
+    <div id="lyricsOutput" hidden>
+      <h3 id="lyricsTitle"></h3>
+      <div id="lyricsSections"></div>
     </div>
-    <div>
-      <label for="tempoStretch">Tempo stretch: <span id="tempoStretchValue">1.0x</span></label>
-      <input type="range" id="tempoStretch" min="50" max="200" value="100" />
+    <p class="note">
+      Real, algorithmically generated lyrics &mdash; template-filled lines drawn from mood-themed
+      word banks, with true rhymes (grouped by actual sound, not spelling) closing every second
+      line. This is <strong>not</strong> an LLM. These words are <strong>never sung</strong> by the
+      generated audio: the "vocal" track is a wordless, pitch-matched melody line (see
+      003_AUDIO_ENGINE), since this system has no text-to-singing-voice synthesis. The phrases
+      below (under Voice Profile) are drawn directly from these lyrics so recording them measures
+      your pitch on the actual generated words &mdash; but it still does not make the output audio
+      pronounce them, and it does not clone your voice's timbre.
+    </p>
+  </section>
+
+  <section id="voice" class="block" aria-labelledby="voiceHead">
+    <h2 id="voiceHead">Voice Profile</h2>
+    <div id="phrases"></div>
+    <div class="actions-row" style="margin-top:12px;">
+      <button id="analyzeVoice" disabled>Analyze Voice</button>
+      <button class="secondary" id="clearVoice">Clear voice profile</button>
     </div>
-  </div>
-  <p class="disclaimer" style="margin-top:0.5rem;">
-    Both are applied to the already-rendered mix with a real phase vocoder (STFT phase
-    unwrapping + overlap-add resynthesis) &mdash; pitch bend changes pitch without changing
-    length; tempo stretch changes length without changing pitch.
-  </p>
+    <p id="voiceStatus" role="status" aria-live="polite"></p>
+    <pre id="voiceProfileOut" hidden></pre>
+    <p class="note">
+      Recording calibrates the synthesizer's vocal <em>pitch range</em> to your voice by measuring
+      it directly from the audio (autocorrelation pitch detection). This is <strong>not</strong>
+      neural voice cloning or text-to-speech in your voice &mdash; it does not reproduce your
+      timbre, only the note range the vocal line stays within. Works best in Chrome/Edge. Once
+      lyrics have been generated, the phrases above become the actual generated lyric lines
+      &mdash; sing or say <em>those specific words</em> so the pitch measurement comes from your
+      real delivery of them, though the words themselves still won't be sung by the output audio.
+    </p>
+  </section>
+</div>
 
-  <div class="row">
-    <div>
-      <label for="bassDb">Bass: <span id="bassDbValue">0</span> dB</label>
-      <input type="range" id="bassDb" min="-12" max="12" value="0" />
-    </div>
-    <div>
-      <label for="midDb">Mid: <span id="midDbValue">0</span> dB</label>
-      <input type="range" id="midDb" min="-12" max="12" value="0" />
-    </div>
-    <div>
-      <label for="trebleDb">Treble: <span id="trebleDbValue">0</span> dB</label>
-      <input type="range" id="trebleDb" min="-12" max="12" value="0" />
-    </div>
-  </div>
-  <p class="disclaimer" style="margin-top:0.5rem;">
-    A real 3-band EQ &mdash; second-order biquad filters using the standard Audio EQ Cookbook
-    formulas (low-shelf/peaking/high-shelf), applied server-side before final loudness
-    normalization, not a cosmetic per-band multiply.
-  </p>
-
-  <div class="toggle">
-    <input type="checkbox" id="instrumental" checked />
-    <label for="instrumental" style="margin:0;">Instrumental (no vocal line)</label>
-  </div>
-  <div class="toggle">
-    <input type="checkbox" id="noDrums" />
-    <label for="noDrums" style="margin:0;">No drums</label>
-  </div>
-  <div class="toggle">
-    <input type="checkbox" id="noBass" />
-    <label for="noBass" style="margin:0;">No bass</label>
-  </div>
-  <div class="toggle">
-    <input type="checkbox" id="waltz" />
-    <label for="waltz" style="margin:0;">Waltz (3/4 time)</label>
-  </div>
-  <p class="disclaimer" style="margin-top:0.5rem;">
-    Waltz genuinely changes the rhythm grid the composer generates on (3 beats per bar with a
-    distinct "oom-pah-pah" drum pattern), not just a metadata label &mdash; see
-    004_COMPOSITION_AGENT/TrackGenerator.
-  </p>
-  <div class="toggle">
-    <input type="checkbox" id="useVoiceProfile" disabled />
-    <label for="useVoiceProfile" style="margin:0;">Use my recorded voice profile for the vocal range</label>
-  </div>
-
-  <div style="margin-top:1rem;">
-    <button id="generate">Generate Track</button>
-    <button class="secondary" id="regenerate" disabled title="Regenerate the exact same track from its seed">Regenerate (same seed)</button>
-  </div>
-  <p id="status"></p>
-  <audio id="player" controls></audio>
-  <div id="playerActions" hidden style="margin-top:0.5rem;">
-    <a id="downloadLink" download="track.wav">Download WAV</a>
-    <span style="margin-left:1rem; font-size:0.8rem; color:#9a9aa5;">Seed: <span id="seedValue"></span></span>
-    <button class="secondary" id="playLive" style="margin-left:1rem;" title="Synthesize this composition live in the browser instead of playing the server-rendered file">Play Live (browser synth)</button>
-    <button class="secondary" id="stopLive" hidden>Stop</button>
-  </div>
-  <p class="disclaimer" style="margin-top:0.75rem;">
-    "Play Live" doesn't play the WAV above &mdash; it synthesizes the composition (notes, chords,
-    timing) directly in your browser via the Web Audio API, in real time, at the moment you click
-    play. The audio genuinely isn't fixed until then. Its <code>pluck</code> timbre is an
-    approximation (a fast-decaying oscillator) of the server's real Karplus-Strong physical
-    modeling, since that needs an AudioWorklet this page doesn't include.
-  </p>
-</section>
-
-<section id="lyrics">
-  <h2>Lyrics</h2>
-  <p class="disclaimer">
-    Real, algorithmically generated lyrics &mdash; template-filled lines drawn from mood-themed
-    word banks, with true rhymes (grouped by actual sound, not spelling) closing every second
-    line. This is <strong>not</strong> an LLM. These words are <strong>never sung</strong> by the
-    generated audio: the "vocal" track is a wordless, pitch-matched melody line (see
-    003_AUDIO_ENGINE), since this system has no text-to-singing-voice synthesis. The phrases
-    below (under Voice Profile) are drawn directly from these lyrics so recording them measures
-    your pitch on the actual generated words &mdash; but it still does not make the output audio
-    pronounce them, and it does not clone your voice's timbre.
-  </p>
-  <button class="secondary" id="generateLyrics">Generate Lyrics</button>
-  <span id="lyricsStatus" style="margin-left:0.75rem; font-size:0.85rem; color:#9a9aa5;"></span>
-  <div id="lyricsOutput" hidden style="margin-top:0.75rem;">
-    <h3 id="lyricsTitle" style="margin:0 0 0.5rem;"></h3>
-    <div id="lyricsSections"></div>
-  </div>
-</section>
-
-<section id="history">
-  <h2>Track History</h2>
-  <div class="stats">
-    <div><span class="label">System status</span><span class="value" id="systemStatus">Idle</span></div>
-    <div><span class="label">Total tracks</span><span class="value" id="totalTracks">0</span></div>
-  </div>
-  <ul class="history" id="historyList"></ul>
-  <div style="margin-top:0.75rem;">
-    <button class="secondary" id="clearHistory">Clear history</button>
-  </div>
-</section>
-
-<section id="voice">
-  <h2>Voice Profile</h2>
-  <p class="disclaimer">
-    Recording calibrates the synthesizer's vocal <em>pitch range</em> to your voice by measuring
-    it directly from the audio (autocorrelation pitch detection). This is <strong>not</strong>
-    neural voice cloning or text-to-speech in your voice &mdash; it does not reproduce your
-    timbre, only the note range the vocal line stays within. Works best in Chrome/Edge. Once
-    lyrics have been generated above, the phrases below become the actual generated lyric lines
-    &mdash; sing or say <em>those specific words</em> so the pitch measurement comes from your
-    real delivery of them, though the words themselves still won't be sung by the output audio.
-  </p>
-  <div id="phrases"></div>
-  <div style="margin-top:0.75rem;">
-    <button id="analyzeVoice" disabled>Analyze Voice</button>
-    <button class="secondary" id="clearVoice">Clear voice profile</button>
-  </div>
-  <p id="voiceStatus"></p>
-  <pre id="voiceProfileOut" hidden></pre>
-</section>
-
+</div>
 <script>
 (function () {
   var apiBaseUrl = "";
@@ -311,6 +448,14 @@
     seedValueEl.textContent = String(meta.seed);
     regenerateEl.disabled = false;
     document.getElementById('playLive').disabled = !lastComposition;
+    document.getElementById('trackTitle').textContent = meta.title || 'Untitled';
+    setScopeComposition(lastComposition);
+    // On a single-column (phone) layout the monitor sits below the controls,
+    // so bring it into view once a track is ready.
+    if (window.innerWidth <= 900) {
+      var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+      document.getElementById('monitor').scrollIntoView({ behavior: reduce ? 'auto' : 'smooth', block: 'start' });
+    }
   }
 
   async function playFromHistory(entry) {
@@ -347,7 +492,7 @@
       var li = document.createElement('li');
       var left = document.createElement('div');
       left.innerHTML = '<strong>' + track.title + '</strong><div class="meta">' +
-        track.style + ' \u00b7 ' + track.bpm + ' bpm \u00b7 ' + track.bars + ' bars \u00b7 seed ' + track.seed + '</div>';
+        track.style + ', ' + track.bpm + ' bpm, ' + track.bars + ' bars, seed ' + track.seed + '</div>';
 
       var actions = document.createElement('div');
       actions.className = 'actions';
@@ -592,11 +737,11 @@
       var html = '<strong>' + phrase.label + '</strong> ' + badge +
         '<div class="prompt">' + phrase.instruction + '</div>';
       if (phrase.text) {
-        html += '<div class="prompt" style="font-style:italic;color:#e8e8ec;">\u201c' + phrase.text + '\u201d</div>';
+        html += '<div class="prompt said">\u201c' + phrase.text + '\u201d</div>';
       }
       div.innerHTML = html;
       var btn = document.createElement('button');
-      btn.className = 'secondary';
+      btn.className = 'secondary record-btn';
       btn.textContent = 'Record';
       btn.addEventListener('click', function () { recordPhrase(phrase.id, btn); });
       div.appendChild(btn);
@@ -829,15 +974,175 @@
 
   document.getElementById('playLive').addEventListener('click', function () {
     if (!lastComposition) return;
+    playerEl.pause();
     LiveSynth.play(lastComposition);
+    startScope('live');
     document.getElementById('stopLive').hidden = false;
     statusEl.textContent = 'Playing live (browser synth).';
   });
 
   document.getElementById('stopLive').addEventListener('click', function () {
     LiveSynth.stop();
+    stopScope();
     document.getElementById('stopLive').hidden = true;
   });
+
+  // --- Piano-roll scope: draws the generated composition's real notes and
+  // follows playback with a playhead (server WAV via the <audio> element,
+  // or the live browser synth via elapsed time). ---
+  var scopeEl = document.getElementById('scope');
+  var scopeCtx = scopeEl.getContext('2d');
+  var scopeLayer = null;
+  var scopeComposition = null;
+  var scopeTotalBeats = 0;
+  var scopeMode = null;
+  var scopeRaf = 0;
+  var liveStartedAt = 0;
+  var liveSeconds = 0;
+  var TRACK_COLORS = ['#F2B84B', '#9FD3C7', '#8FA8FF', '#F08A7A', '#D9D9C3'];
+
+  function sizeScope() {
+    var dpr = window.devicePixelRatio || 1;
+    var w = scopeEl.clientWidth;
+    var h = scopeEl.clientHeight;
+    if (!w || !h) return false;
+    scopeEl.width = Math.round(w * dpr);
+    scopeEl.height = Math.round(h * dpr);
+    return true;
+  }
+
+  function buildScopeLayer() {
+    var W = scopeEl.width, H = scopeEl.height;
+    var dpr = window.devicePixelRatio || 1;
+    var layer = document.createElement('canvas');
+    layer.width = W; layer.height = H;
+    var c = layer.getContext('2d');
+    c.fillStyle = '#121C19';
+    c.fillRect(0, 0, W, H);
+    if (!scopeComposition || !scopeComposition.tracks) {
+      c.fillStyle = '#6E847B';
+      c.font = (14 * dpr) + 'px system-ui, sans-serif';
+      c.textBaseline = 'middle';
+      c.fillText('Generate a track to see its notes here.', 16 * dpr, H / 2);
+      return layer;
+    }
+    var minP = 127, maxP = 0, maxEnd = 0;
+    scopeComposition.tracks.forEach(function (t) {
+      (t.notes || []).forEach(function (n) {
+        if (n.pitch < minP) minP = n.pitch;
+        if (n.pitch > maxP) maxP = n.pitch;
+        if (n.start + n.duration > maxEnd) maxEnd = n.start + n.duration;
+      });
+    });
+    if (maxEnd <= 0) maxEnd = 1;
+    if (maxP < minP) { minP = 48; maxP = 72; }
+    scopeTotalBeats = maxEnd;
+    var bars = scopeComposition.bars || 8;
+    for (var b = 0; b <= bars; b++) {
+      var gx = Math.round(b / bars * (W - 1)) + 0.5;
+      c.strokeStyle = b % 4 === 0 ? 'rgba(230,238,232,0.20)' : 'rgba(230,238,232,0.08)';
+      c.lineWidth = dpr;
+      c.beginPath(); c.moveTo(gx, 0); c.lineTo(gx, H); c.stroke();
+    }
+    var pad = 10 * dpr;
+    var range = Math.max(1, maxP - minP);
+    var rowH = Math.max(2 * dpr, Math.min(9 * dpr, (H - 2 * pad) / (range + 1)));
+    scopeComposition.tracks.forEach(function (t, i) {
+      c.fillStyle = TRACK_COLORS[i % TRACK_COLORS.length];
+      c.globalAlpha = 0.9;
+      (t.notes || []).forEach(function (n) {
+        var x = n.start / maxEnd * W;
+        var w = Math.max(2 * dpr, n.duration / maxEnd * W - dpr);
+        var y = H - pad - (n.pitch - minP) / range * (H - 2 * pad) - rowH / 2;
+        c.fillRect(x, y, w, rowH);
+      });
+    });
+    c.globalAlpha = 1;
+    return layer;
+  }
+
+  function currentFraction() {
+    if (scopeMode === 'wav') {
+      var d = playerEl.duration;
+      return d && isFinite(d) ? playerEl.currentTime / d : -1;
+    }
+    if (scopeMode === 'live' && liveSeconds > 0) {
+      return (performance.now() - liveStartedAt) / 1000 / liveSeconds;
+    }
+    return -1;
+  }
+
+  function paintScope(fraction) {
+    if (!scopeLayer) return;
+    scopeCtx.drawImage(scopeLayer, 0, 0);
+    if (fraction >= 0 && fraction <= 1) {
+      var dpr = window.devicePixelRatio || 1;
+      var x = Math.round(fraction * scopeEl.width);
+      scopeCtx.fillStyle = 'rgba(242,184,75,0.16)';
+      scopeCtx.fillRect(Math.max(0, x - 14 * dpr), 0, 14 * dpr, scopeEl.height);
+      scopeCtx.fillStyle = '#F2B84B';
+      scopeCtx.fillRect(x, 0, 2 * dpr, scopeEl.height);
+    }
+  }
+
+  function scopeTick() {
+    var f = currentFraction();
+    paintScope(f);
+    if (scopeMode && f <= 1) {
+      scopeRaf = requestAnimationFrame(scopeTick);
+    } else {
+      scopeRaf = 0;
+      if (scopeMode === 'live') document.getElementById('stopLive').hidden = true;
+      scopeMode = null;
+      paintScope(-1);
+    }
+  }
+
+  function startScope(mode) {
+    scopeMode = mode;
+    if (mode === 'live') {
+      liveStartedAt = performance.now() + 100; // synth starts 0.1s after the click
+      liveSeconds = scopeTotalBeats * 60 / ((scopeComposition && scopeComposition.tempo) || 120);
+    }
+    if (!scopeRaf) scopeRaf = requestAnimationFrame(scopeTick);
+  }
+
+  function stopScope() {
+    scopeMode = null;
+    if (scopeRaf) { cancelAnimationFrame(scopeRaf); scopeRaf = 0; }
+    paintScope(-1);
+  }
+
+  function redrawScope() {
+    if (!sizeScope()) return;
+    scopeLayer = buildScopeLayer();
+    paintScope(currentFraction());
+  }
+
+  function setScopeComposition(composition) {
+    scopeComposition = composition;
+    var info = document.getElementById('scopeInfo');
+    if (composition) {
+      var n = 0;
+      (composition.tracks || []).forEach(function (t) { n += (t.notes || []).length; });
+      info.textContent = composition.tempo + ' bpm, ' + (composition.bars || '?') + ' bars, ' + n + ' notes';
+    } else {
+      info.textContent = 'Notes appear here';
+    }
+    redrawScope();
+  }
+
+  // Keep the phone layout short: shaping groups start collapsed there.
+  if (window.innerWidth <= 900) {
+    Array.prototype.forEach.call(document.querySelectorAll('details.group'), function (d) { d.removeAttribute('open'); });
+  }
+
+  playerEl.addEventListener('play', function () { startScope('wav'); });
+  playerEl.addEventListener('pause', function () { if (scopeMode === 'wav') stopScope(); });
+  playerEl.addEventListener('ended', function () { if (scopeMode === 'wav') stopScope(); });
+  playerEl.addEventListener('seeked', function () { if (!scopeRaf) paintScope(currentFraction()); });
+  window.addEventListener('resize', redrawScope);
+  redrawScope();
 
   renderHistory();
   refreshVoiceToggle();
